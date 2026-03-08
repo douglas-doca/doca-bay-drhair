@@ -1,0 +1,31 @@
+
+services:
+  drhair-scheduler:
+    build: .
+    container_name: drhair-scheduler
+    restart: unless-stopped
+    ports:
+      - "3003:3001"
+    shm_size: '1gb'  # ← ADICIONA ISSO
+    volumes:
+      - ./data:/app/data
+      - ./screenshots:/app/screenshots
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - TZ=America/Sao_Paulo
+      - UNOBJECT_USERNAME=malyck.ia.drhair.contagem
+      - UNOBJECT_PASSWORD=Malyck123$$
+      - SCREENSHOTS=true
+      - PUPPETEER_ARGS=--no-sandbox --disable-dev-shm-usage --disable-gpu  # ← ADICIONA ISSO
+    networks:
+      - mcp-doca-v2_mcp_internal
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          pids: 500  # ← ADICIONA ISSO
+
+networks:
+  mcp-doca-v2_mcp_internal:
+    external: true
