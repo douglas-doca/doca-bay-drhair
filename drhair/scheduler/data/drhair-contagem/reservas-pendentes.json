@@ -1,0 +1,35 @@
+[
+  {
+    "id": "1768400801046",
+    "franquiaId": "drhair-contagem",
+    "telefone": "31999999999",
+    "nome": "Teste",
+    "data": "14/01/2026",
+    "horario": "15:00",
+    "genero": null,
+    "criadoEm": "2026-01-14T14:26:41.046Z",
+    "status": "pendente"
+  },
+  {
+    "id": "1768963016317",
+    "franquiaId": "drhair-contagem",
+    "telefone": "5531999999999",
+    "nome": "Teste Bot",
+    "data": "23/01/2026",
+    "horario": "16:00",
+    "genero": null,
+    "criadoEm": "2026-01-21T02:36:56.317Z",
+    "status": "pendente"
+  },
+  {
+    "id": "1768963276935",
+    "franquiaId": "drhair-contagem",
+    "telefone": "5531999999999",
+    "nome": "Teste Bot",
+    "data": "23/01/2026",
+    "horario": "16:00",
+    "genero": null,
+    "criadoEm": "2026-01-21T02:41:16.935Z",
+    "status": "pendente"
+  }
+]

@@ -1,0 +1,1252 @@
+#!/usr/bin/env node
+// ============================================
+// DOCA-OCTA — MCP Server (Dr. Hair Contagem)
+// Model Context Protocol Server
+//
+// 🔧 TOOLS: 39 tools organizadas por domínio
+// Cada tool mapeia para services reais do DOCA-OCTA
+// ============================================
+
+import "./instrumentation.js";
+import "dotenv/config";
+
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { createServer, IncomingMessage, ServerResponse } from "http";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
+
+import { logger } from "./utils/logger.js";
+import { wahaService } from "./services/waha.service.js";
+import { aiService } from "./services/ai.service.js";
+import { analysisService } from "./services/analysis.service.js";
+import { emotionService } from "./services/emotion.service.js";
+import { supabaseService } from "./services/supabase.service.js";
+import { clientService } from "./services/client.service.js";
+import { getLeadMemory, generateMemorySummary, processMemoryPipeline } from "./services/memory.service.js";
+import { schedulerService } from "./services/scheduler.service.js";
+
+// ============================================
+// Server Configuration
+// ============================================
+
+const SERVER_NAME = "mcp-doca-v2";
+const SERVER_VERSION = "2.0.0";
+
+logger.separator("MCP-DOCA-V2 Server");
+logger.info(`Starting ${SERVER_NAME} v${SERVER_VERSION}`);
+
+// ============================================
+// Helper: resolve tenant
+// ============================================
+
+function getCurrentTenant(): string {
+  return process.env.TENANT_ID || "61985a43-dcdc-4dc5-9c74-a3015b996100";
+}
+
+// ============================================
+// TOOLS DEFINITION — 39 tools
+// ============================================
+
+const TOOLS = [
+  // ──────────────────────────────────────────
+  // 📋 LEADS (7 tools)
+  // ──────────────────────────────────────────
+  {
+    name: "buscar_lead",
+    description: "Busca um lead pelo telefone ou ID. Retorna nome, estágio, dados e histórico resumido.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        telefone: { type: "string", description: "Telefone do lead (ex: 5531999999999)" },
+        lead_id: { type: "string", description: "ID do lead (alternativa ao telefone)" },
+      },
+      required: [] as string[],
+    },
+  },
+  {
+    name: "criar_lead",
+    description: "Cria um novo lead no sistema com nome, telefone e dados iniciais.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        nome: { type: "string", description: "Nome do lead" },
+        telefone: { type: "string", description: "Telefone com DDI (ex: 5531999999999)" },
+        email: { type: "string", description: "E-mail (opcional)" },
+        origem: { type: "string", description: "Origem do lead (ex: meta_ads, organico, indicacao)" },
+        notas: { type: "string", description: "Notas iniciais sobre o lead" },
+      },
+      required: ["telefone"],
+    },
+  },
+  {
+    name: "atualizar_lead",
+    description: "Atualiza dados de um lead existente (nome, estágio, notas, etc).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        lead_id: { type: "string", description: "ID do lead" },
+        telefone: { type: "string", description: "Telefone do lead (alternativa ao ID)" },
+        nome: { type: "string", description: "Novo nome" },
+        status: { type: "string", description: "Novo status (novo, qualificado, agendado, convertido, perdido)" },
+        notas: { type: "string", description: "Notas adicionais" },
+        lead_stage: { type: "string", description: "Estágio no funil" },
+      },
+      required: [] as string[],
+    },
+  },
+  {
+    name: "listar_leads",
+    description: "Lista leads do tenant, opcionalmente filtrados por status.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        status: { type: "string", description: "Filtrar por status (novo, qualificado, agendado, convertido, perdido)" },
+        limit: { type: "number", description: "Quantidade máxima (padrão: 20)" },
+      },
+      required: [] as string[],
+    },
+  },
+  {
+    name: "perfil_lead_completo",
+    description: "Retorna perfil completo do lead: dados, memórias, emoções, histórico e health score.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        lead_id: { type: "string", description: "ID do lead" },
+        telefone: { type: "string", description: "Telefone do lead (alternativa ao ID)" },
+      },
+      required: [] as string[],
+    },
+  },
+
+  // ──────────────────────────────────────────
+  // 💬 CONVERSAS (5 tools)
+  // ──────────────────────────────────────────
+  {
+    name: "historico_conversa",
+    description: "Retorna o histórico de mensagens de uma conversa com um lead.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        lead_id: { type: "string", description: "ID do lead" },
+        telefone: { type: "string", description: "Telefone do lead" },
+        limit: { type: "number", description: "Quantidade de mensagens (padrão: 20)" },
+      },
+      required: [] as string[],
+    },
+  },
+  {
+    name: "registrar_mensagem",
+    description: "Registra uma mensagem na conversa de um lead.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        conversation_id: { type: "string", description: "ID da conversa" },
+        role: { type: "string", enum: ["lead", "agent", "system"], description: "Quem enviou" },
+        content: { type: "string", description: "Conteúdo da mensagem" },
+      },
+      required: ["content"],
+    },
+  },
+  {
+    name: "buscar_contexto",
+    description: "Busca o contexto atual de uma conversa (resumo, estágio, última interação).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        telefone: { type: "string", description: "Telefone do lead" },
+        lead_id: { type: "string", description: "ID do lead" },
+      },
+      required: [] as string[],
+    },
+  },
+  {
+    name: "conversas_pendentes",
+    description: "Lista conversas que estão esperando resposta (leads ativos sem resposta recente).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        limit: { type: "number", description: "Quantidade máxima (padrão: 20)" },
+      },
+      required: [] as string[],
+    },
+  },
+  {
+    name: "buscar_conversa_lead",
+    description: "Busca a conversa ativa de um lead específico pelo telefone.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        telefone: { type: "string", description: "Telefone do lead" },
+      },
+      required: [] as string[],
+    },
+  },
+
+  // ──────────────────────────────────────────
+  // 🧠 MEMÓRIA (3 tools)
+  // ──────────────────────────────────────────
+  {
+    name: "buscar_memorias",
+    description: "Busca memórias salvas de um lead (nome, preferências, objeções, compromissos, contexto anterior).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        lead_id: { type: "string", description: "ID do lead" },
+        telefone: { type: "string", description: "Telefone do lead" },
+      },
+      required: [] as string[],
+    },
+  },
+  {
+    name: "salvar_memoria",
+    description: "Salva uma memória sobre o lead (fato aprendido, objeção, compromisso, preferência).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        lead_id: { type: "string", description: "ID do lead" },
+        telefone: { type: "string", description: "Telefone do lead" },
+        tipo: { type: "string", enum: ["fato", "objection", "commitment", "preference", "context"], description: "Tipo da memória" },
+        conteudo: { type: "string", description: "Conteúdo da memória (ex: 'nome: Ricardo', 'objeção: preço')" },
+      },
+      required: ["conteudo"],
+    },
+  },
+  {
+    name: "melhor_estrategia",
+    description: "Analisa o perfil do lead e sugere a melhor estratégia de abordagem (tom, gatilhos, o que evitar).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        lead_id: { type: "string", description: "ID do lead" },
+        telefone: { type: "string", description: "Telefone do lead" },
+      },
+      required: [] as string[],
+    },
+  },
+
+  // ──────────────────────────────────────────
+  // 😊 EMOÇÃO E SENTIMENTO (4 tools)
+  // ──────────────────────────────────────────
+  {
+    name: "analisar_sentimento",
+    description: "Analisa o sentimento de uma mensagem do lead (positivo, negativo, neutro, ansioso, frustrado, etc).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        message: { type: "string", description: "Mensagem para analisar" },
+        lead_id: { type: "string", description: "ID do lead (opcional, para contexto)" },
+      },
+      required: ["message"],
+    },
+  },
+  {
+    name: "registrar_emocao",
+    description: "Registra um evento emocional do lead (emoção detectada durante a conversa).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        lead_id: { type: "string", description: "ID do lead" },
+        emotion: { type: "string", description: "Emoção detectada (ex: ansioso, frustrado, esperancoso, confiante)" },
+        trigger: { type: "string", description: "O que causou a emoção" },
+        intensity: { type: "number", description: "Intensidade de 0 a 1" },
+      },
+      required: ["lead_id", "emotion"],
+    },
+  },
+  {
+    name: "tendencia_emocional",
+    description: "Retorna a tendência emocional do lead ao longo do tempo (melhora, piora, estável).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        lead_id: { type: "string", description: "ID do lead" },
+      },
+      required: ["lead_id"],
+    },
+  },
+  {
+    name: "sugerir_abordagem",
+    description: "Sugere a melhor abordagem emocional para o lead com base no estado atual.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        lead_id: { type: "string", description: "ID do lead" },
+      },
+      required: ["lead_id"],
+    },
+  },
+
+  // ──────────────────────────────────────────
+  // 📚 CONHECIMENTO, TEMPLATES, PROVAS SOCIAIS (3 tools)
+  // ──────────────────────────────────────────
+  {
+    name: "buscar_conhecimento",
+    description: "Busca na base de conhecimento da clínica (procedimentos, FAQ, método, preços, localização).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        query: { type: "string", description: "Pergunta ou tema para buscar (ex: 'como funciona o tratamento', 'endereço', 'dói?')" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "listar_templates",
+    description: "Lista templates de mensagens disponíveis para o tenant (confirmação, follow-up, etc).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        categoria: { type: "string", description: "Filtrar por categoria (opcional)" },
+      },
+      required: [] as string[],
+    },
+  },
+  {
+    name: "buscar_provas_sociais",
+    description: "Busca fotos de antes/depois e depoimentos para usar como prova social. Retorna IDs para usar com [PROVA_SOCIAL:id].",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        regiao: { type: "string", description: "Região do cabelo para filtrar por tags (entradas, topo, coroa, geral)" },
+        limit: { type: "number", description: "Quantidade (padrão: 3)" },
+      },
+      required: [] as string[],
+    },
+  },
+
+  // ──────────────────────────────────────────
+  // 📅 AGENDAMENTO (4 tools)
+  // ──────────────────────────────────────────
+  {
+    name: "consultar_horarios",
+    description: "Consulta horários disponíveis para agendamento em uma data específica.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        data: { type: "string", description: "Data no formato YYYY-MM-DD" },
+      },
+      required: ["data"],
+    },
+  },
+  {
+    name: "agendar_consulta",
+    description: "Agenda uma consulta/avaliação para o lead.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        lead_id: { type: "string", description: "ID do lead" },
+        telefone: { type: "string", description: "Telefone do lead" },
+        nome: { type: "string", description: "Nome completo do lead" },
+        data: { type: "string", description: "Data no formato YYYY-MM-DD" },
+        horario: { type: "string", description: "Horário no formato HH:MM" },
+        tipo: { type: "string", description: "Tipo (avaliacao, retorno, sessao). Padrão: avaliacao" },
+      },
+      required: ["nome", "data", "horario", "telefone"],
+    },
+  },
+  {
+    name: "buscar_agendamentos",
+    description: "Busca agendamentos de um lead ou de uma data específica.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        lead_id: { type: "string", description: "ID do lead" },
+        telefone: { type: "string", description: "Telefone do lead" },
+        data: { type: "string", description: "Data no formato YYYY-MM-DD (opcional)" },
+      },
+      required: [] as string[],
+    },
+  },
+  {
+    name: "atualizar_agendamento",
+    description: "Atualiza status de um agendamento (confirmar, cancelar, remarcar).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        agendamento_id: { type: "string", description: "ID do agendamento" },
+        status: { type: "string", enum: ["confirmado", "cancelado", "remarcado", "realizado", "no_show"], description: "Novo status" },
+        nova_data: { type: "string", description: "Nova data se remarcando (YYYY-MM-DD)" },
+        novo_horario: { type: "string", description: "Novo horário se remarcando (HH:MM)" },
+      },
+      required: ["agendamento_id", "status"],
+    },
+  },
+  {
+    name: "horarios_disponiveis",
+    description: "Alias para consultar_horarios. Consulta disponibilidade de horários.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tenant_id: { type: "string", description: "ID do tenant" },
+        data: { type: "string", description: "Data no formato YYYY-MM-DD" },
+      },
+      required: ["data"],
+    },
+  },
+
+  // ──────────────────────────────────────────
+  // 📱 WAHA — WhatsApp (5 tools)
+  // ──────────────────────────────────────────
+  {
+    name: "waha_send_message",
+    description: "Envia uma mensagem de texto via WhatsApp usando WAHA",
+    inputSchema: {
+      type: "object",
+      properties: {
+        phone: { type: "string", description: "Número do telefone (ex: 5511999999999)" },
+        message: { type: "string", description: "Texto da mensagem a enviar" },
+      },
+      required: ["phone", "message"],
+    },
+  },
+  {
+    name: "waha_send_image",
+    description: "Envia uma imagem via WhatsApp usando WAHA",
+    inputSchema: {
+      type: "object",
+      properties: {
+        phone: { type: "string", description: "Número do telefone" },
+        imageUrl: { type: "string", description: "URL da imagem" },
+        caption: { type: "string", description: "Legenda da imagem (opcional)" },
+      },
+      required: ["phone", "imageUrl"],
+    },
+  },
+  {
+    name: "waha_get_messages",
+    description: "Obtém histórico de mensagens de um chat",
+    inputSchema: {
+      type: "object",
+      properties: {
+        phone: { type: "string", description: "Número do telefone" },
+        limit: { type: "number", description: "Quantidade de mensagens (padrão: 50)" },
+      },
+      required: ["phone"],
+    },
+  },
+  {
+    name: "waha_check_number",
+    description: "Verifica se um número existe no WhatsApp",
+    inputSchema: {
+      type: "object",
+      properties: {
+        phone: { type: "string", description: "Número do telefone para verificar" },
+      },
+      required: ["phone"],
+    },
+  },
+  {
+    name: "waha_session_status",
+    description: "Verifica o status da sessão WAHA",
+    inputSchema: { type: "object", properties: {} },
+  },
+
+  // ──────────────────────────────────────────
+  // 🤖 AI (4 tools)
+  // ──────────────────────────────────────────
+  {
+    name: "ai_generate_response",
+    description: "Gera uma resposta usando IA para uma mensagem do cliente",
+    inputSchema: {
+      type: "object",
+      properties: {
+        userMessage: { type: "string", description: "Mensagem do usuário" },
+        leadName: { type: "string", description: "Nome do lead (opcional)" },
+        context: { type: "string", description: "Contexto adicional" },
+        tone: { type: "string", enum: ["formal", "casual", "professional"], description: "Tom da resposta" },
+      },
+      required: ["userMessage"],
+    },
+  },
+  {
+    name: "ai_analyze_intent",
+    description: "Analisa a intenção de uma mensagem",
+    inputSchema: {
+      type: "object",
+      properties: { message: { type: "string", description: "Mensagem para analisar" } },
+      required: ["message"],
+    },
+  },
+  {
+    name: "ai_analyze_sentiment",
+    description: "Analisa o sentimento de uma mensagem",
+    inputSchema: {
+      type: "object",
+      properties: { message: { type: "string", description: "Mensagem para analisar" } },
+      required: ["message"],
+    },
+  },
+  {
+    name: "ai_qualify_lead",
+    description: "Qualifica um lead baseado no histórico de conversa",
+    inputSchema: {
+      type: "object",
+      properties: {
+        conversation: {
+          type: "array",
+          items: { type: "object", properties: { role: { type: "string" }, content: { type: "string" } } },
+          description: "Histórico da conversa",
+        },
+      },
+      required: ["conversation"],
+    },
+  },
+
+  // ──────────────────────────────────────────
+  // 📊 ANÁLISE (4 tools)
+  // ──────────────────────────────────────────
+  {
+    name: "analysis_get_stalled_conversations",
+    description: "Lista conversas paradas para sugerir follow-ups",
+    inputSchema: {
+      type: "object",
+      properties: {
+        min_minutes: { type: "number", description: "Mínimo de minutos parado" },
+        limit: { type: "number", description: "Quantidade máxima" },
+        status: { type: "string", enum: ["open", "closed"], description: "Status da conversa" },
+      },
+      required: [] as string[],
+    },
+  },
+  {
+    name: "analysis_get_summary",
+    description: "Resumo geral da aba de análise",
+    inputSchema: {
+      type: "object",
+      properties: { range: { type: "string", enum: ["today", "7d", "30d"] } },
+      required: [] as string[],
+    },
+  },
+  {
+    name: "analysis_run_followup",
+    description: "Roda IA em uma conversa e sugere follow-up + alternativas",
+    inputSchema: {
+      type: "object",
+      properties: {
+        conversation_id: { type: "string", description: "ID da conversa" },
+        mode: { type: "string", enum: ["followup", "insights"] },
+        language: { type: "string", description: "Idioma (ex: pt-BR)" },
+      },
+      required: ["conversation_id"],
+    },
+  },
+  {
+    name: "analysis_approve_send_followup",
+    description: "Aprova e envia o follow-up pelo WhatsApp",
+    inputSchema: {
+      type: "object",
+      properties: {
+        conversation_id: { type: "string", description: "ID da conversa" },
+        text: { type: "string", description: "Texto aprovado para envio" },
+        followup_id: { type: "string" },
+        phone: { type: "string" },
+      },
+      required: ["conversation_id", "text"],
+    },
+  },
+
+  // ──────────────────────────────────────────
+  // 😊 EMOTION DASHBOARD (4 tools)
+  // ──────────────────────────────────────────
+  {
+    name: "emotion_get_dashboard_metrics",
+    description: "Métricas gerais: total leads, média health, distribuições",
+    inputSchema: { type: "object", properties: {}, required: [] as string[] },
+  },
+  {
+    name: "emotion_get_sentiment_matrix",
+    description: "Matriz sentimento x intenção para dashboard",
+    inputSchema: { type: "object", properties: {}, required: [] as string[] },
+  },
+  {
+    name: "emotion_get_emotional_funnel",
+    description: "Funil emocional (stages + contagens)",
+    inputSchema: { type: "object", properties: {}, required: [] as string[] },
+  },
+  {
+    name: "emotion_get_lead_health",
+    description: "Health score + estágio emocional de um lead",
+    inputSchema: {
+      type: "object",
+      properties: { lead_id: { type: "string", description: "ID do lead" } },
+      required: ["lead_id"],
+    },
+  },
+
+  // ──────────────────────────────────────────
+  // ⏰ UTILIDADE (1 tool)
+  // ──────────────────────────────────────────
+  {
+    name: "get_current_time",
+    description: "Retorna a data e hora atual no fuso horário de São Paulo",
+    inputSchema: { type: "object", properties: {} },
+  },
+];
+
+// ============================================
+// Resources
+// ============================================
+
+const RESOURCES = [
+  { uri: "doca://config/server", name: "Server Configuration", description: "Configurações atuais do servidor MCP", mimeType: "application/json" },
+  { uri: "doca://config/ai", name: "AI Configuration", description: "Configurações do serviço de IA", mimeType: "application/json" },
+  { uri: "doca://status/waha", name: "WAHA Status", description: "Status atual da sessão WAHA", mimeType: "application/json" },
+];
+
+// ============================================
+// TOOL HANDLERS
+// ============================================
+
+async function handleToolCall(name: string, args: Record<string, unknown>) {
+  logger.mcp(`Tool called: ${name}`, args);
+
+  const tenantId = (args.tenant_id as string) || getCurrentTenant();
+
+  try {
+    let result: unknown;
+
+    switch (name) {
+
+      // ── LEADS ────────────────────────────────
+
+      case "buscar_lead": {
+        if (args.lead_id) {
+          result = await supabaseService.getLeadById(tenantId, args.lead_id as string);
+        } else if (args.telefone) {
+          result = await supabaseService.getLeadByPhone(tenantId, args.telefone as string);
+        } else {
+          result = { error: "Informe telefone ou lead_id" };
+        }
+        break;
+      }
+
+      case "criar_lead": {
+        result = await supabaseService.createLead({
+          tenant_id: tenantId,
+          phone: args.telefone as string,
+          name: (args.nome as string) || undefined,
+          email: (args.email as string) || undefined,
+          source: (args.origem as string) || "whatsapp",
+          customFields: args.notas ? { notas: args.notas } : {},
+        } as any);
+        break;
+      }
+
+      case "atualizar_lead": {
+        const leadId = args.lead_id as string;
+        if (!leadId && args.telefone) {
+          const lead = await supabaseService.getLeadByPhone(tenantId, args.telefone as string);
+          if (lead) {
+            const updates: any = {};
+            if (args.nome) updates.name = args.nome;
+            if (args.status) updates.status = args.status;
+            if (args.notas) updates.notes = args.notas;
+            if (args.lead_stage) updates.lead_stage = args.lead_stage;
+            result = await supabaseService.updateLead(tenantId, lead.id, updates);
+          } else {
+            result = { error: "Lead não encontrado" };
+          }
+        } else if (leadId) {
+          const updates: any = {};
+          if (args.nome) updates.name = args.nome;
+          if (args.status) updates.status = args.status;
+          if (args.notas) updates.notes = args.notas;
+          if (args.lead_stage) updates.lead_stage = args.lead_stage;
+          result = await supabaseService.updateLead(tenantId, leadId, updates);
+        } else {
+          result = { error: "Informe lead_id ou telefone" };
+        }
+        break;
+      }
+
+      case "listar_leads": {
+        const status = args.status as string | undefined;
+        const limit = (args.limit as number) || 20;
+        result = await supabaseService.getLeads(tenantId, status, limit);
+        break;
+      }
+
+      case "perfil_lead_completo": {
+        let lead: any = null;
+        if (args.lead_id) {
+          lead = await supabaseService.getLeadById(tenantId, args.lead_id as string);
+        } else if (args.telefone) {
+          lead = await supabaseService.getLeadByPhone(tenantId, args.telefone as string);
+        }
+        if (!lead) { result = { error: "Lead não encontrado" }; break; }
+
+        const [memories, health, conv] = await Promise.all([
+          getLeadMemory(tenantId, lead.id).catch((): null => null),
+          emotionService.getLeadHealth(tenantId, lead.id).catch((): null => null),
+          supabaseService.getConversationByPhone(tenantId, lead.phone).catch((): null => null),
+        ]);
+
+        let recentMessages: any[] = [];
+        if (conv) {
+          recentMessages = await supabaseService.getRecentMessages(tenantId, conv.id, 5).catch((): any[] => []);
+        }
+
+        result = {
+          lead,
+          memories,
+          health_score: health,
+          conversa_ativa: conv ? { id: conv.id, status: conv.status, updated_at: conv.updatedAt } : null,
+          ultimas_mensagens: recentMessages,
+        };
+        break;
+      }
+
+      // ── CONVERSAS ────────────────────────────
+
+      case "historico_conversa": {
+        let conv: any = null;
+        if (args.telefone) {
+          conv = await supabaseService.getConversationByPhone(tenantId, args.telefone as string);
+        } else if (args.lead_id) {
+          const lead = await supabaseService.getLeadById(tenantId, args.lead_id as string);
+          if (lead) conv = await supabaseService.getConversationByPhone(tenantId, lead.phone);
+        }
+        if (!conv) { result = { error: "Conversa não encontrada" }; break; }
+        const limit = (args.limit as number) || 20;
+        result = await supabaseService.getMessagesByConversation(tenantId, conv.id, limit);
+        break;
+      }
+
+      case "registrar_mensagem": {
+        const convId = args.conversation_id as string;
+        if (!convId) { result = { error: "conversation_id obrigatório" }; break; }
+        result = await supabaseService.addMessage(convId, {
+          role: ((args.role as string) || "assistant") as "user" | "assistant" | "system",
+          content: args.content as string,
+          timestamp: new Date(),
+          tenant_id: tenantId,
+        } as any);
+        break;
+      }
+
+      case "buscar_contexto": {
+        let conv: any = null;
+        if (args.telefone) {
+          conv = await supabaseService.getConversationByPhone(tenantId, args.telefone as string);
+        } else if (args.lead_id) {
+          const lead = await supabaseService.getLeadById(tenantId, args.lead_id as string);
+          if (lead) conv = await supabaseService.getConversationByPhone(tenantId, lead.phone);
+        }
+        if (!conv) { result = { error: "Conversa não encontrada" }; break; }
+        const msgs = await supabaseService.getRecentMessages(tenantId, conv.id, 5);
+        result = { conversation: { id: conv.id, status: conv.status, context: conv.context }, recent_messages: msgs };
+        break;
+      }
+
+      case "conversas_pendentes": {
+        const limit = (args.limit as number) || 20;
+        result = await supabaseService.getConversationsByStatus(tenantId, "open" as any);
+        if (Array.isArray(result)) result = (result as any[]).slice(0, limit);
+        break;
+      }
+
+      case "buscar_conversa_lead": {
+        if (!args.telefone) { result = { error: "telefone obrigatório" }; break; }
+        result = await supabaseService.getConversationByPhone(tenantId, args.telefone as string);
+        break;
+      }
+
+      // ── MEMÓRIA ──────────────────────────────
+
+      case "buscar_memorias": {
+        let leadId = args.lead_id as string;
+        if (!leadId && args.telefone) {
+          const lead = await supabaseService.getLeadByPhone(tenantId, args.telefone as string);
+          leadId = lead?.id || "";
+        }
+        if (!leadId) { result = { error: "Lead não encontrado" }; break; }
+        result = await getLeadMemory(tenantId, leadId);
+        break;
+      }
+
+      case "salvar_memoria": {
+        let leadId = args.lead_id as string;
+        if (!leadId && args.telefone) {
+          const lead = await supabaseService.getLeadByPhone(tenantId, args.telefone as string);
+          leadId = lead?.id || "";
+        }
+        if (!leadId) { result = { error: "Lead não encontrado" }; break; }
+
+        const memoryData = {
+          tenant_id: tenantId,
+          lead_id: leadId,
+          type: (args.tipo as string) || "context",
+          content: args.conteudo as string,
+          created_at: new Date().toISOString(),
+        };
+        await supabaseService.request("POST", "lead_memories", { body: memoryData });
+        result = { success: true, message: "Memória salva", ...memoryData };
+        break;
+      }
+
+      case "melhor_estrategia": {
+        let leadId = args.lead_id as string;
+        if (!leadId && args.telefone) {
+          const lead = await supabaseService.getLeadByPhone(tenantId, args.telefone as string);
+          leadId = lead?.id || "";
+        }
+        if (!leadId) { result = { error: "Lead não encontrado" }; break; }
+
+        const [memories, health] = await Promise.all([
+          getLeadMemory(tenantId, leadId).catch((): null => null),
+          emotionService.getLeadHealth(tenantId, leadId).catch((): null => null),
+        ]);
+
+        const objections = Array.isArray(memories) ? memories.filter((m: any) => m.type === "objection") : [];
+        const commitments = Array.isArray(memories) ? memories.filter((m: any) => m.type === "commitment") : [];
+
+        result = {
+          lead_id: leadId,
+          health_score: health,
+          objections_conhecidas: objections.map((o: any) => o.content),
+          compromissos: commitments.map((c: any) => c.content),
+          sugestao: objections.length > 0
+            ? "Lead tem objeções registradas. Aborde com empatia, reconheça a objeção e reconduza para a avaliação gratuita."
+            : commitments.length > 0
+              ? "Lead tem compromissos anteriores. Faça referência a eles para criar continuidade."
+              : "Sem histórico relevante. Use abordagem padrão de conexão e qualificação.",
+        };
+        break;
+      }
+
+      // ── EMOÇÃO ───────────────────────────────
+
+      case "analisar_sentimento": {
+        result = await aiService.analyzeSentiment(args.message as string);
+        break;
+      }
+
+      case "registrar_emocao": {
+        await emotionService.saveEmotionEvent(tenantId, {
+          lead_id: args.lead_id as string,
+          emotion: args.emotion,
+          intensity: (args.intensity as number) || 0.5,
+          source: "agent",
+          message_content: (args.trigger as string) || "conversation",
+        } as any);
+        result = { success: true, message: "Emoção registrada" };
+        break;
+      }
+
+      case "tendencia_emocional": {
+        const leadHealth = await emotionService.getLeadHealth(tenantId, args.lead_id as string);
+        if (!leadHealth) { result = { error: "Sem dados emocionais para este lead" }; break; }
+        result = {
+          lead_id: args.lead_id,
+          health_score: leadHealth.health_score,
+          temperature: leadHealth.temperature,
+          urgency_level: leadHealth.urgency_level,
+          trend: leadHealth.health_score >= 70 ? "positiva" : leadHealth.health_score >= 40 ? "neutra" : "negativa",
+          friction_points: leadHealth.friction_points,
+          positive_signals: leadHealth.positive_signals,
+        };
+        break;
+      }
+
+      case "sugerir_abordagem": {
+        const lHealth = await emotionService.getLeadHealth(tenantId, args.lead_id as string);
+        if (!lHealth) { result = { sugestao: "Sem dados emocionais. Use abordagem neutra e acolhedora." }; break; }
+
+        const score = lHealth.health_score ?? 50;
+        let sugestao: string;
+        if (score >= 70) {
+          sugestao = "Lead positivo. Aproveite o momento para avançar no funil. Tom confiante e direto.";
+        } else if (score >= 40) {
+          sugestao = "Lead neutro. Crie conexão antes de empurrar CTA. Faça perguntas, mostre interesse genuíno.";
+        } else {
+          sugestao = "Lead frustrado ou negativo. Acolha, valide a emoção, NÃO force venda. Reconduza com leveza.";
+        }
+
+        result = { lead_id: args.lead_id, health_score: score, urgency: lHealth.urgency_level, sugestao };
+        break;
+      }
+
+      // ── CONHECIMENTO, TEMPLATES, PROVAS ──────
+
+      case "buscar_conhecimento": {
+        const query = args.query as string;
+        try {
+          const kbResults = await supabaseService.request<any[]>("GET", "knowledge_base", {
+            query: `tenant_id=eq.${tenantId}&active=eq.true&or=(question.ilike.*${encodeURIComponent(query)}*,answer.ilike.*${encodeURIComponent(query)}*,keywords.cs.{${encodeURIComponent(query)}})&order=priority.desc&limit=5`,
+          });
+          result = kbResults && kbResults.length > 0
+            ? kbResults.map((kb: any) => ({ id: kb.id, category: kb.category, question: kb.question, answer: kb.answer }))
+            : { message: "Nenhum resultado encontrado na base de conhecimento", query };
+        } catch {
+          result = { error: "Erro ao buscar na base de conhecimento" };
+        }
+        break;
+      }
+
+      case "listar_templates": {
+        result = await supabaseService.getAllTemplates(tenantId);
+        break;
+      }
+
+      case "buscar_provas_sociais": {
+        try {
+          let q = `tenant_id=eq.${tenantId}&active=eq.true&order=priority.desc&limit=${(args.limit as number) || 3}`;
+          if (args.regiao) {
+            q += `&tags=cs.{${encodeURIComponent(args.regiao as string)}}`;
+          }
+          const proofs = await supabaseService.request<any[]>("GET", "social_proof_assets", { query: q });
+          result = proofs && proofs.length > 0
+            ? proofs.map((p: any) => ({
+                id: p.id,
+                title: p.title,
+                tags: p.tags,
+                suggested_text: p.suggested_text,
+                result: p.result,
+                has_before_after: !!(p.image_before && p.image_after),
+                uso: `Use na resposta: [PROVA_SOCIAL:${p.id}]`,
+              }))
+            : { message: "Nenhuma prova social encontrada" };
+        } catch {
+          result = { error: "Erro ao buscar provas sociais" };
+        }
+        break;
+      }
+
+      // ── AGENDAMENTO ──────────────────────────
+
+      case "consultar_horarios":
+      case "horarios_disponiveis": {
+        const data = args.data as string;
+        try {
+          // consultarHorarios(clientId, data, tenantId?)
+          result = await schedulerService.consultarHorarios("drhair-contagem", data, tenantId);
+        } catch (err: any) {
+          result = { error: `Erro ao consultar horários: ${err.message}` };
+        }
+        break;
+      }
+
+      case "agendar_consulta": {
+        try {
+          // criarAgendamento(clientId, dados, tenantId?)
+          result = await schedulerService.criarAgendamento("drhair-contagem", {
+            telefone: args.telefone as string,
+            data: args.data as string,
+            horario: args.horario as string,
+            nome: args.nome as string,
+            dataNascimento: args.data_nascimento as string,
+            leadId: args.lead_id as string,
+          }, tenantId);
+        } catch (err: any) {
+          if (err.message?.includes("duplicate") || err.message?.includes("já existe")) {
+            result = { success: true, message: "Agendamento já existe (duplicate key). Horário reservado!", duplicate: true };
+          } else {
+            result = { error: `Erro ao agendar: ${err.message}` };
+          }
+        }
+        break;
+      }
+
+      case "buscar_agendamentos": {
+        try {
+          let q = `tenant_id=eq.${tenantId}`;
+          if (args.lead_id) q += `&lead_id=eq.${args.lead_id}`;
+          if (args.telefone) q += `&telefone=eq.${args.telefone}`;
+          if (args.data) q += `&data=eq.${args.data}`;
+          q += "&order=data.desc,horario.desc&limit=10";
+          result = await supabaseService.request<any[]>("GET", "agendamentos", { query: q });
+        } catch {
+          result = { error: "Erro ao buscar agendamentos" };
+        }
+        break;
+      }
+
+      case "atualizar_agendamento": {
+        try {
+          // atualizarAgendamento(telefone, data, horario, dados)
+          result = await schedulerService.atualizarAgendamento(
+            args.telefone as string || "",
+            args.nova_data as string || "",
+            args.novo_horario as string || "",
+            {
+              nome: args.nome as string,
+              dataNascimento: args.data_nascimento as string,
+            }
+          );
+        } catch (err: any) {
+          result = { error: `Erro ao atualizar agendamento: ${err.message}` };
+        }
+        break;
+      }
+
+      // ── WAHA ─────────────────────────────────
+
+      case "waha_send_message":
+        result = await wahaService.sendMessage({ chatId: args.phone as string, text: args.message as string });
+        break;
+
+      case "waha_send_image":
+        result = await wahaService.sendImage(args.phone as string, args.imageUrl as string, args.caption as string | undefined);
+        break;
+
+      case "waha_get_messages":
+        result = await wahaService.getMessages(args.phone as string, (args.limit as number) || 50);
+        break;
+
+      case "waha_check_number":
+        result = await wahaService.checkNumber(args.phone as string);
+        break;
+
+      case "waha_session_status":
+        result = (wahaService as any).getSessionStatus
+          ? await (wahaService as any).getSessionStatus()
+          : { status: "unknown" };
+        break;
+
+      // ── AI ───────────────────────────────────
+
+      case "ai_generate_response":
+        result = await aiService.generateResponse(args.userMessage as string, {
+          leadName: args.leadName as string | undefined,
+          businessInfo: args.context as string | undefined,
+          tone: args.tone as "formal" | "casual" | "professional" | undefined,
+        });
+        break;
+
+      case "ai_analyze_intent":
+        result = await aiService.analyzeIntent(args.message as string);
+        break;
+
+      case "ai_analyze_sentiment":
+        result = await aiService.analyzeSentiment(args.message as string);
+        break;
+
+      case "ai_qualify_lead":
+        result = await aiService.qualifyLead(args.conversation as Array<{ role: "user" | "assistant"; content: string }>);
+        break;
+
+      // ── ANALYSIS ─────────────────────────────
+
+      case "analysis_get_stalled_conversations":
+        result = await analysisService.getStalledConversations({
+          tenantId, min_minutes: (args.min_minutes as number) ?? 240, limit: (args.limit as number) ?? 20, status: (args.status as "open" | "closed") ?? "open",
+        });
+        break;
+
+      case "analysis_get_summary":
+        result = await analysisService.getSummary({ tenantId, range: (args.range as "today" | "7d" | "30d") ?? "today" });
+        break;
+
+      case "analysis_run_followup":
+        result = await analysisService.runAnalysis({
+          tenantId, conversation_id: args.conversation_id as string, mode: (args.mode as "followup" | "insights") ?? "followup", language: (args.language as string) ?? "pt-BR",
+        });
+        break;
+
+      case "analysis_approve_send_followup":
+        result = await analysisService.approveAndSend({
+          tenantId, conversation_id: args.conversation_id as string, text: args.text as string, followup_id: (args.followup_id as string) || undefined, phone: (args.phone as string) || undefined,
+        });
+        break;
+
+      // ── EMOTION DASHBOARD ────────────────────
+
+      case "emotion_get_dashboard_metrics":
+        result = await emotionService.getDashboardMetrics(tenantId);
+        break;
+
+      case "emotion_get_sentiment_matrix":
+        result = await emotionService.getSentimentMatrix(tenantId);
+        break;
+
+      case "emotion_get_emotional_funnel":
+        result = await emotionService.getEmotionalFunnel(tenantId);
+        break;
+
+      case "emotion_get_lead_health":
+        result = await emotionService.getLeadHealth(tenantId, args.lead_id as string);
+        break;
+
+      // ── UTILIDADE ────────────────────────────
+
+      case "get_current_time":
+        result = {
+          timestamp: new Date().toISOString(),
+          formatted: new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }),
+          timezone: "America/Sao_Paulo",
+        };
+        break;
+
+      default:
+        throw new Error(`Unknown tool: ${name}`);
+    }
+
+    logger.mcp(`Tool ${name} completed successfully`);
+    return {
+      content: [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result, null, 2) }],
+    };
+  } catch (error) {
+    logger.error(`Tool ${name} failed`, error);
+    return {
+      content: [{ type: "text", text: JSON.stringify({ error: true, message: error instanceof Error ? error.message : "Unknown error", tool: name }) }],
+      isError: true,
+    };
+  }
+}
+
+// ============================================
+// Resources Handler
+// ============================================
+
+async function handleReadResource(uri: string) {
+  logger.mcp(`Read resource: ${uri}`);
+  let content: string;
+  switch (uri) {
+    case "doca://config/server":
+      content = JSON.stringify({ name: SERVER_NAME, version: SERVER_VERSION, timestamp: new Date().toISOString(), tools_count: TOOLS.length }, null, 2);
+      break;
+    case "doca://config/ai":
+      content = JSON.stringify(aiService.getConfig(), null, 2);
+      break;
+    case "doca://status/waha":
+      try {
+        const status = (wahaService as any).getSessionStatus ? await (wahaService as any).getSessionStatus() : { status: "unknown" };
+        content = JSON.stringify(status, null, 2);
+      } catch { content = JSON.stringify({ error: "WAHA not available" }); }
+      break;
+    default:
+      throw new Error(`Unknown resource: ${uri}`);
+  }
+  return { contents: [{ uri, mimeType: "application/json", text: content }] };
+}
+
+// ============================================
+// MCP Server Factory
+// ============================================
+
+function createMcpServer(): Server {
+  const server = new Server(
+    { name: SERVER_NAME, version: SERVER_VERSION },
+    { capabilities: { tools: {}, resources: {} } }
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    logger.mcp("List tools requested");
+    return { tools: TOOLS };
+  });
+
+  server.setRequestHandler(ListResourcesRequestSchema, async () => {
+    logger.mcp("List resources requested");
+    return { resources: RESOURCES };
+  });
+
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    return handleReadResource(request.params.uri);
+  });
+
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    return handleToolCall(name, (args || {}) as Record<string, unknown>);
+  });
+
+  return server;
+}
+
+// ============================================
+// HTTP + SSE Server
+// ============================================
+
+async function handleSseConnection(req: IncomingMessage, res: ServerResponse, transports: Map<string, SSEServerTransport>) {
+  logger.info("🔌 Nova conexão recebida no /sse!");
+  const transport = new SSEServerTransport("/message", res);
+  const sessionId = transport.sessionId;
+  transports.set(sessionId, transport);
+  req.on("close", () => { transports.delete(sessionId); });
+  res.on("close", () => { transports.delete(sessionId); });
+  const sessionServer = createMcpServer();
+  await sessionServer.connect(transport);
+}
+
+async function handleMessagePost(req: IncomingMessage, res: ServerResponse, transports: Map<string, SSEServerTransport>) {
+  const url = new URL(req.url || "", `http://${req.headers.host || "localhost"}`);
+  const sessionId = url.searchParams.get("sessionId");
+  if (!sessionId) { res.writeHead(400); res.end("Missing sessionId"); return; }
+  const transport = transports.get(sessionId);
+  if (!transport) { res.writeHead(404); res.end("Session not found"); return; }
+  await transport.handlePostMessage(req, res);
+}
+
+async function main() {
+  try {
+    try {
+      if (typeof (supabaseService as any).initialize === "function") {
+        await (supabaseService as any).initialize();
+      }
+    } catch { logger.warn("Supabase initialize skipped/failed (continuing)..."); }
+
+    const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3100;
+    const transports = new Map<string, SSEServerTransport>();
+
+    const httpServer = createServer(async (req, res) => {
+      try {
+        if (req.url?.startsWith("/sse")) { await handleSseConnection(req, res, transports); return; }
+        if (req.url?.startsWith("/message") && req.method === "POST") { await handleMessagePost(req, res, transports); return; }
+        if (req.url === "/health") { res.writeHead(200); res.end(JSON.stringify({ status: "ok", tools: TOOLS.length, version: SERVER_VERSION })); return; }
+        res.writeHead(404); res.end("Not found");
+      } catch (error) {
+        logger.error("HTTP SSE server error", error);
+        if (!res.headersSent) res.writeHead(500);
+        res.end("Internal server error");
+      }
+    });
+
+    httpServer.listen(PORT, "0.0.0.0", () => {
+      logger.info(`${SERVER_NAME} v${SERVER_VERSION} rodando na porta ${PORT} 🚀`);
+      logger.info(`Tools available: ${TOOLS.length}`);
+      logger.info(`Resources available: ${RESOURCES.length}`);
+      console.error("📁 Clientes disponíveis:", clientService.listClients());
+      logger.separator();
+    });
+  } catch (error) {
+    logger.error("Failed to start server", error);
+    process.exit(1);
+  }
+}
+
+// ============================================
+// Shutdown
+// ============================================
+
+process.on("SIGINT", () => { logger.info("Shutting down..."); process.exit(0); });
+process.on("SIGTERM", () => { logger.info("Shutting down..."); process.exit(0); });
+
+main();

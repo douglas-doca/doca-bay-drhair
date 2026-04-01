@@ -1,0 +1,178 @@
+{
+  "id": "drhair-contagem",
+  "message_provider": "waha",
+  "franquia_id": "drhair-contagem",
+  "nome": "Dr. Hair Contagem",
+  "nome_exibicao": "Dr. Hair Contagem",
+  "telefone": "+553184023725",
+  "endereco": "Av. Pref. Gil Diniz, 1385 - Fonte Grande, Contagem - MG, 32015-712",
+  "especialidade": "Tratamento e Regeneração Capilar",
+  "medico": "Dr(a). Responsável",
+  "horario_funcionamento": {
+    "abertura": "10:00",
+    "fechamento": "20:00",
+    "intervalo_almoco": {
+      "inicio": "13:00",
+      "fim": "15:00"
+    },
+    "intervalo_minutos": 40,
+    "duracao_avaliacao_minutos": 40,
+    "dias_funcionamento": [
+      "segunda",
+      "terca",
+      "quarta",
+      "quinta",
+      "sexta",
+      "sabado"
+    ],
+    "horarios_especiais": {
+      "sabado": {
+        "abertura": "09:00",
+        "fechamento": "12:00",
+        "intervalo_almoco": null
+      }
+    }
+  },
+  "procedimentos": [
+    "Diagnóstico com tricoscopia",
+    "Intradermoterapia",
+    "Laser capilar",
+    "Protocolos personalizados",
+    "Avaliação"
+  ],
+  "personalizacao": {
+    "tom": "profissional e acolhedor",
+    "usa_emoji": true,
+    "cor_primaria": "#4A90E2",
+    "logo_url": "",
+    "delays": {
+      "pensamento_min": 1500,
+      "pensamento_max": 6000,
+      "digitacao_base_min": 2000,
+      "digitacao_base_max": 3000,
+      "digitacao_por_char": 50,
+      "anexar_imagem": 1500
+    }
+  },
+  "waha": {
+    "instance": "drhair-contagem",
+    "chipPhone": "553184023725",
+    "baseUrl": "http://waha:3000"
+  },
+  "configuracoes": {
+    "auto_resposta": false,
+    "horario_resposta_automatica": {
+      "inicio": "10:00",
+      "fim": "20:00"
+    },
+    "mensagem_fora_horario": "Olá! Estamos fora do horário de atendimento. Nosso horário é de 10:00 às 20:00. Deixe sua mensagem que retornaremos em breve! 😊",
+    "tempo_espera_resposta_minutos": 5,
+    "notificar_novos_leads": true
+  },
+  "crm": {
+    "tipo": "unobject",
+    "sala_principal": "01 - Deborah",
+    "salas": [
+      {
+        "id": "sala01",
+        "nome": "01 - Deborah",
+        "profissional": "Deborah",
+        "ativo": true
+      },
+      {
+        "id": "sala02",
+        "nome": "02 - Vanessa",
+        "profissional": "Vanessa",
+        "ativo": true
+      }
+    ],
+    "url": "https://app.unobject.com.br/login"
+  },
+  "ai_config": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-20250514",
+    "temperature": 0.8,
+    "max_tokens": 200,
+    "top_p": 0.95,
+    "frequency_penalty": 0.4,
+    "presence_penalty": 0.4,
+    "stream": false
+  },
+  "features": {
+    "emotion_detection": true,
+    "memory_tracking": true,
+    "context_enrichment": true,
+    "smart_formatting": true,
+    "followup_service": true,
+    "natural_separator": true
+  },
+  "conversation": {
+    "message_separator": "|||",
+    "max_blocks_per_message": 3,
+    "chars_per_block": 150,
+    "min_chars_per_block": 50,
+    "enable_natural_formatting": true,
+    "session_timeout_hours": 24,
+    "history_limit": 10
+  },
+  "emotion_mapping": {
+    "skeptical": {
+      "keywords": [
+        "duvido",
+        "será",
+        "não acredito",
+        "mentira"
+      ],
+      "instruction": "Aumente credibilidade com casos reais"
+    },
+    "anxious": {
+      "keywords": [
+        "urgente",
+        "rápido",
+        "agora",
+        "hoje",
+        "já"
+      ],
+      "instruction": "Vá mais devagar, seja calorosa"
+    },
+    "frustrated": {
+      "keywords": [
+        "desisto",
+        "cansado",
+        "nada funciona"
+      ],
+      "instruction": "Máxima empatia, zero pressão"
+    },
+    "excited": {
+      "keywords": [
+        "quero",
+        "vamos",
+        "ótimo",
+        "bora"
+      ],
+      "instruction": "Acompanhe a energia, acelere fechamento"
+    },
+    "price_sensitive": {
+      "keywords": [
+        "caro",
+        "valor",
+        "preço",
+        "quanto"
+      ],
+      "instruction": "Foque no valor, não no preço"
+    }
+  },
+  "journey_stages": {
+    "0": "Descobrir o nome",
+    "1": "Identificar o problema",
+    "2": "Validar e dar esperança",
+    "3": "Educar sobre o método",
+    "4": "Oferecer avaliação gratuita",
+    "5": "Confirmar agendamento"
+  },
+  "tools": [
+    "agendamento"
+  ],
+  "scheduler_url": "http://drhair-scheduler:3001",
+  "tenant_id": "61985a43-dcdc-4dc5-9c74-a3015b996100"
+}

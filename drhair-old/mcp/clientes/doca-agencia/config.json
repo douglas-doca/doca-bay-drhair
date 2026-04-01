@@ -1,0 +1,48 @@
+{
+  "id": "doca-agencia",
+  "message_provider": "waha",
+  "nome": "DOCA Performance",
+  "nome_exibicao": "DOCA Performance",
+  "telefone": "+5519999949516",
+  "especialidade": "Automação com IA",
+  "waha": {
+    "instance": "doca-principal",
+    "chipPhone": "5519999949516",
+    "baseUrl": "http://waha-doca:3000",
+    "apiKey": "doca_api_key_2026"
+  },
+  "ai_config": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-20250514",
+    "temperature": 0.7,
+    "max_tokens": 300
+  },
+  "features": {
+    "emotion_detection": true,
+    "memory_tracking": true,
+    "context_enrichment": true,
+    "smart_formatting": true,
+    "followup_service": true,
+    "natural_separator": true
+  },
+  "conversation": {
+    "message_separator": "|||",
+    "max_blocks_per_message": 2,
+    "chars_per_block": 150,
+    "min_chars_per_block": 50,
+    "enable_natural_formatting": true,
+    "session_timeout_hours": 24,
+    "history_limit": 10
+  },
+  "routing": {
+    "mode": "session"
+  },
+  "tools": [
+    "consultar_horarios",
+    "agendar_reuniao",
+    "cancelar_reuniao",
+    "remarcar_reuniao"
+  ],
+  "mcp_server_url": "http://host.docker.internal:3200/sse",
+  "tenant_id": "7817e5ea-d43e-4e5b-9fd3-5cb2077d0aeb"
+}

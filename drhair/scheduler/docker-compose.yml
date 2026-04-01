@@ -1,0 +1,37 @@
+services:
+  doca-scheduler:
+    build: .
+    container_name: doca-scheduler
+    restart: unless-stopped
+    ports:
+      - "3003:3001"
+    shm_size: '1gb'
+    volumes:
+      - ./data:/app/data
+      - ./screenshots:/app/screenshots
+      - ./config:/app/config
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - TZ=America/Sao_Paulo
+    healthcheck:
+      # Usa o endpoint /health/scraper que retorna 503 quando Chromium morre
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/health/scraper').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 120s
+      timeout: 15s
+      retries: 2
+      start_period: 90s
+    networks:
+      - mcp-doca-v2_mcp_internal
+      - doca-octa_mcp_internal
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          pids: 500
+
+networks:
+  mcp-doca-v2_mcp_internal:
+    external: true
+  doca-octa_mcp_internal:
+    external: true

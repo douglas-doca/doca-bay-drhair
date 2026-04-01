@@ -1,0 +1,39 @@
+services:
+  mcp-drhair:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mcp-drhair-contagem
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=America/Sao_Paulo
+      - PORT=3100
+    volumes:
+      - ./clientes:/app/clientes
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "3100"
+    networks:
+      - mcp_internal
+      - supabase_internal
+      - doca_db_internal
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3100/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+networks:
+  mcp_internal:
+    name: doca-octa_mcp_internal
+    external: true
+  supabase_internal:
+    name: supabase_supabase_internal
+    external: true
+  doca_db_internal:
+    name: doca-db_supabase_internal
+    external: true

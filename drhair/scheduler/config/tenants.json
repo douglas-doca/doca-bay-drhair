@@ -1,0 +1,132 @@
+{
+  "tenants": {
+    "drhair-contagem": {
+      "nome": "Dr. Hair Contagem",
+      "unobject": {
+        "url": "https://app.unobject.com.br/login",
+        "username": "malyck.ia.drhair.contagem",
+        "password": "Malyck123$$"
+      },
+      "salas": [
+        {
+          "id": "sala01",
+          "nome": "01 - Deborah",
+          "profissional": "Deborah",
+          "ativo": true
+        },
+        {
+          "id": "sala02",
+          "nome": "02 - Juliana",
+          "profissional": "Juliana",
+          "ativo": true
+        }
+      ],
+      "horarios": {
+        "segunda_sexta": {
+          "inicio": "10:00",
+          "fim": "19:30"
+        },
+        "sabado": {
+          "inicio": "09:00",
+          "fim": "12:00"
+        },
+        "domingo": null
+      },
+      "duracaoAvaliacao": 40,
+      "cacheIntervalMin": 30,
+      "ativo": true
+    },
+    "magrass-barro-preto": {
+      "nome": "Magrass Barro Preto",
+      "unobject": {
+        "url": "https://app.unobject.com.br/login",
+        "username": "malyckia.bhbarropreto",
+        "password": "123456"
+      },
+      "salas": [
+        {
+          "id": "sala01",
+          "nome": "01 - Thaís",
+          "profissional": "Thaís",
+          "ativo": true
+        },
+        {
+          "id": "sala02",
+          "nome": "02 - Suporte",
+          "profissional": "Suporte",
+          "ativo": true
+        },
+        {
+          "id": "sala03",
+          "nome": "03 - Mariana",
+          "profissional": "Mariana",
+          "ativo": false
+        }
+      ],
+      "horarios": {
+        "segunda_sexta": {
+          "inicio": "08:00",
+          "fim": "20:00"
+        },
+        "sabado": {
+          "inicio": "08:00",
+          "fim": "16:00"
+        },
+        "domingo": null
+      },
+      "duracaoAvaliacao": 60,
+      "cacheIntervalMin": 30,
+      "ativo": true
+    },
+    "magrass-betim": {
+      "nome": "Magrass Betim",
+      "unobject": {
+        "url": "https://app.unobject.com.br/login",
+        "username": "fernanda.betim",
+        "password": "080913"
+      },
+      "salas": [
+        {
+          "id": "sala01",
+          "nome": "01 - Fernanda",
+          "profissional": "Fernanda",
+          "ativo": true
+        },
+        {
+          "id": "sala02",
+          "nome": "02 - Beatriz",
+          "profissional": "Beatriz",
+          "ativo": true
+        }
+      ],
+      "horarios": {
+        "segunda_sexta": {
+          "inicio": "08:00",
+          "fim": "20:00"
+        },
+        "sabado": {
+          "inicio": "08:00",
+          "fim": "16:00"
+        },
+        "domingo": null
+      },
+      "duracaoAvaliacao": 60,
+      "cacheIntervalMin": 30,
+      "ativo": true
+    }
+  },
+  "global": {
+    "puppeteer": {
+      "headless": true,
+      "timeout": 90000,
+      "args": [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu"
+      ]
+    },
+    "screenshots": true,
+    "screenshotDir": "/app/screenshots"
+  }
+}

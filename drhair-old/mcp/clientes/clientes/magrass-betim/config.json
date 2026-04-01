@@ -1,0 +1,145 @@
+{
+  "id": "magrass-betim",
+  "message_provider": "waha",
+  "franquia_id": "magrass-betim",
+  "nome": "Magrass Betim",
+  "nome_exibicao": "Magrass Betim",
+  "telefone": "",
+  "endereco": "",
+  "especialidade": "Emagrecimento Saudável e Estética",
+  "medico": "Amanda",
+  "horario_funcionamento": {
+    "abertura": "09:00",
+    "fechamento": "19:00",
+    "intervalo_almoco": {
+      "inicio": "12:00",
+      "fim": "13:00"
+    },
+    "intervalo_minutos": 50,
+    "duracao_avaliacao_minutos": 50,
+    "dias_funcionamento": [
+      "segunda",
+      "terca",
+      "quarta",
+      "quinta",
+      "sexta",
+      "sabado"
+    ],
+    "horarios_especiais": {
+      "sabado": {
+        "abertura": "09:00",
+        "fechamento": "13:00",
+        "intervalo_almoco": null
+      }
+    }
+  },
+  "procedimentos": [
+    "Emagrecimento Saudável",
+    "Aceleramento Metabólico",
+    "Procedimentos de Alto Padrão",
+    "Gordura Localizada",
+    "Celulite",
+    "Flacidez",
+    "Estrias",
+    "Avaliação Gratuita"
+  ],
+  "personalizacao": {
+    "tom": "caloroso, seguro e envolvente",
+    "usa_emoji": true,
+    "cor_primaria": "#00AFAA",
+    "logo_url": "/logos/magrass-logo.png",
+    "delays": {
+      "pensamento_min": 1500,
+      "pensamento_max": 6000,
+      "digitacao_base_min": 2000,
+      "digitacao_base_max": 3000,
+      "digitacao_por_char": 50,
+      "anexar_imagem": 1500
+    }
+  },
+  "waha": {
+    "instance": "",
+    "chipPhone": "",
+    "baseUrl": "http://waha:3000"
+  },
+  "configuracoes": {
+    "auto_resposta": false,
+    "horario_resposta_automatica": {
+      "inicio": "09:00",
+      "fim": "19:00"
+    },
+    "mensagem_fora_horario": "Olá! Estamos fora do horário de atendimento. Nosso horário é de segunda a sexta das 09:00 às 19:00 e sábados das 09:00 às 13:00. Deixe sua mensagem que a Amanda retorna em breve! 💚",
+    "tempo_espera_resposta_minutos": 5,
+    "notificar_novos_leads": true
+  },
+  "crm": {
+    "tipo": null,
+    "sala_principal": null,
+    "salas": [],
+    "url": null
+  },
+  "ai_config": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-6",
+    "temperature": 0.8,
+    "max_tokens": 200,
+    "top_p": 0.95,
+    "frequency_penalty": 0.4,
+    "presence_penalty": 0.4,
+    "stream": false
+  },
+  "features": {
+    "emotion_detection": true,
+    "memory_tracking": true,
+    "context_enrichment": true,
+    "smart_formatting": true,
+    "followup_service": true,
+    "natural_separator": true
+  },
+  "conversation": {
+    "message_separator": "|||",
+    "max_blocks_per_message": 3,
+    "chars_per_block": 150,
+    "min_chars_per_block": 50,
+    "enable_natural_formatting": true,
+    "session_timeout_hours": 24,
+    "history_limit": 10
+  },
+  "emotion_mapping": {
+    "skeptical": {
+      "keywords": ["duvido", "será", "não acredito", "mentira", "funciona mesmo"],
+      "instruction": "Aumente credibilidade com casos reais de transformação"
+    },
+    "anxious": {
+      "keywords": ["urgente", "rápido", "agora", "hoje", "já"],
+      "instruction": "Vá mais devagar, seja calorosa e acolhedora"
+    },
+    "frustrated": {
+      "keywords": ["desisto", "cansada", "nada funciona", "já tentei tudo"],
+      "instruction": "Máxima empatia, zero pressão, foque na esperança"
+    },
+    "excited": {
+      "keywords": ["quero", "vamos", "ótimo", "bora", "adorei"],
+      "instruction": "Acompanhe a energia, acelere para o agendamento"
+    },
+    "price_sensitive": {
+      "keywords": ["caro", "valor", "preço", "quanto", "condição"],
+      "instruction": "Foque na transformação e no parcelamento, nunca passe preço"
+    },
+    "insecure": {
+      "keywords": ["não sei", "tenho medo", "e se não funcionar", "duvidosa"],
+      "instruction": "Reforce casos de sucesso, seja firme e encorajadora"
+    }
+  },
+  "journey_stages": {
+    "0": "Identificar objetivo (gordura ou peso)",
+    "1": "Descobrir o nome e criar conexão",
+    "2": "Entender histórico de tratamentos",
+    "3": "Apresentar os 3 pilares do método",
+    "4": "Identificar o que atrapalha o processo",
+    "5": "Criar necessidade da avaliação presencial",
+    "6": "Agendar consulta gratuita com urgência"
+  },
+  "tools": [],
+  "tenant_id": "d9b5c3a1-4e2f-48d9-a1b2-c3d4e5f6a7b8"
+}

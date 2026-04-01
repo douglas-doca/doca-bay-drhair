@@ -1,123 +1,63 @@
-# Dr. Hair Scheduler API
+# DOCA Bay — Dr. Hair
 
-API REST para consulta de horários e agendamentos no CRM UnObject.
+MCP Server + Scheduler para a marca Dr. Hair.
+Segue o padrão Bay: cada marca tem seu MCP isolado.
 
-## Arquitetura
+## Estrutura
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  drhair-scheduler (container)                           │
-│  - UnObject Scraper (Puppeteer)                         │
-│  - Cache de horários (atualiza a cada 30 min)           │
-│  - API REST na porta 3001                               │
-└─────────────────────────────────────────────────────────┘
-                          │
-                          │ HTTP (localhost:3001)
-                          ▼
-┌─────────────────────────────────────────────────────────┐
-│  MCP-DOCA-V2 / Outros sistemas                          │
-│  - Chama API do scheduler                               │
-│  - Usa resultado no prompt da IA                        │
-└─────────────────────────────────────────────────────────┘
+drhair/
+├── mcp/                          ← Container 1: MCP Server (43 tools, SSE)
+│   ├── src/
+│   │   ├── index.ts              ← 43 tools MCP
+│   │   ├── services/             ← fork do OCTA (supabase, memory, emotion, ai, waha, analysis)
+│   │   ├── types/
+│   │   └── utils/
+│   ├── .env                      ← secrets (gitignored)
+│   ├── docker-compose.yml        ← porta interna 3100
+│   └── Dockerfile                ← Node leve, sem Chromium
+│
+├── scheduler/                    ← Container 2: Scraper UnObject (Puppeteer)
+│   ├── src/
+│   │   ├── server.js             ← Express multi-franquia
+│   │   ├── scheduler.js          ← Cron + auto-recovery
+│   │   └── services/
+│   │       ├── scraper.js        ← UnObject Puppeteer
+│   │       ├── cache.js          ← Cache por franquia
+│   │       └── reservas.js       ← Reservas por franquia
+│   ├── config/franquias.json     ← credenciais UnObject por franquia
+│   ├── docker-compose.yml        ← porta 3003, healthcheck Chromium
+│   └── Dockerfile                ← Node + Chromium
+│
+└── data/                         ← volume compartilhado (cache + reservas)
+    └── drhair-contagem/
 ```
-
-## Endpoints
-
-### `GET /api/horarios?data=DD/MM/YYYY`
-Consulta horários disponíveis para uma data.
-
-**Parâmetros:**
-- `data`: Data no formato DD/MM/YYYY, "hoje", "amanha", ou dia da semana
-
-**Resposta:**
-```json
-{
-  "success": true,
-  "data": "15/01/2025",
-  "horarios": ["10:00", "10:40", "11:20", "15:00"],
-  "total": 4
-}
-```
-
-### `POST /api/agendar`
-Cria uma reserva pendente (não confirma no CRM ainda).
-
-**Body:**
-```json
-{
-  "nome": "João Silva",
-  "telefone": "31999999999",
-  "data": "15/01/2025",
-  "horario": "10:00",
-  "dataNascimento": "01/01/1990"
-}
-```
-
-**Resposta:**
-```json
-{
-  "success": true,
-  "message": "Horário reservado!",
-  "reservaId": "1705276800000",
-  "status": "pendente"
-}
-```
-
-### `POST /api/confirmar/:id`
-Confirma uma reserva pendente no CRM via Puppeteer.
-
-### `DELETE /api/cancelar/:id`
-Cancela uma reserva pendente.
-
-### `GET /api/reservas`
-Lista todas as reservas pendentes.
-
-### `GET /api/status`
-Status do sistema e cache.
-
-### `POST /api/cache/atualizar`
-Força atualização do cache de horários.
-
-### `GET /health`
-Health check.
 
 ## Deploy
 
 ```bash
-# Na pasta scheduler-api
-docker compose build
-docker compose up -d
+# 1. MCP
+cd mcp && docker compose up -d --build
 
-# Ver logs
-docker logs drhair-scheduler -f
+# 2. Scheduler
+cd scheduler && docker compose up -d --build
+
+# 3. Verificar
+curl http://localhost:3100/health     # MCP
+curl http://localhost:3003/health     # Scheduler
+curl http://localhost:3003/api/status # Status multi-franquia
 ```
 
-## Variáveis de Ambiente
+## Relação com DOCA-OCTA
 
-```env
-PORT=3001
-UNOBJECT_USERNAME=malyck.ia.drhair.contagem
-UNOBJECT_PASSWORD=Malyck123$$
-SCREENSHOTS=false
-TZ=America/Sao_Paulo
-```
+- OCTA = código mãe (engine, router, webhook, humanizer)
+- Bay = MCPs filhos (tools por marca)
+- OCTA conecta no MCP via SSE: `http://mcp-drhair-contagem:3100/sse`
+- MCP conecta no Scheduler via HTTP: `http://doca-scheduler:3001/api/:franquia/horarios`
 
-## Uso no MCP-DOCA-V2
+## Adicionar nova franquia Dr. Hair
 
-```typescript
-// Consultar horários
-const response = await fetch('http://localhost:3001/api/horarios?data=15/01/2025');
-const { horarios } = await response.json();
-
-// Agendar
-const response = await fetch('http://localhost:3001/api/agendar', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    nome: 'João',
-    telefone: '31999999999',
-    data: '15/01/2025',
-    horario: '10:00'
-  })
-});
-```
+1. Editar `scheduler/config/franquias.json` — adicionar credenciais UnObject
+2. Criar `data/{nova-franquia}/` — cache e reservas
+3. Restart scheduler: `cd scheduler && docker compose restart`
+4. Pronto! O MCP já serve todas as franquias via tenant_id
