@@ -12,6 +12,7 @@ import "dotenv/config";
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer, IncomingMessage, ServerResponse } from "http";
 import {
   CallToolRequestSchema,
@@ -34,7 +35,7 @@ import { schedulerService } from "./services/scheduler.service.js";
 // Server Configuration
 // ============================================
 
-const SERVER_NAME = "mcp-magrass-barropreto";
+const SERVER_NAME = "mcp-magrass-lafaiete";
 const SERVER_VERSION = "2.0.0";
 
 logger.separator("MCP-DOCA-V2 Server");
@@ -1210,6 +1211,13 @@ async function handleMessagePost(req: IncomingMessage, res: ServerResponse, tran
   await transport.handlePostMessage(req, res);
 }
 
+async function handleStreamableHttp(req: IncomingMessage, res: ServerResponse) {
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  const server = createMcpServer();
+  await server.connect(transport);
+  await transport.handleRequest(req, res);
+}
+
 async function main() {
   try {
     try {
@@ -1223,6 +1231,7 @@ async function main() {
 
     const httpServer = createServer(async (req, res) => {
       try {
+        if (req.url?.startsWith("/mcp") && req.method === "POST") { await handleStreamableHttp(req, res); return; }
         if (req.url?.startsWith("/sse")) { await handleSseConnection(req, res, transports); return; }
         if (req.url?.startsWith("/message") && req.method === "POST") { await handleMessagePost(req, res, transports); return; }
         if (req.url === "/health") { res.writeHead(200); res.end(JSON.stringify({ status: "ok", tools: TOOLS.length, version: SERVER_VERSION })); return; }
@@ -1236,6 +1245,7 @@ async function main() {
 
     httpServer.listen(PORT, "0.0.0.0", () => {
       logger.info(`${SERVER_NAME} v${SERVER_VERSION} rodando na porta ${PORT} 🚀`);
+      logger.info(`Transports: Streamable HTTP (/mcp) + SSE (/sse)`);
       logger.info(`Tools available: ${TOOLS.length}`);
       logger.info(`Resources available: ${RESOURCES.length}`);
       console.error("📁 Clientes disponíveis:", clientService.listClients());

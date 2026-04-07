@@ -36,76 +36,34 @@
       "cacheIntervalMin": 30,
       "ativo": true
     },
-    "magrass-barro-preto": {
-      "nome": "Magrass Barro Preto",
+    "magrass-lafaiete": {
+      "nome": "Magrass Conselheiro Lafaiete",
       "unobject": {
         "url": "https://app.unobject.com.br/login",
-        "username": "malyckia.bhbarropreto",
-        "password": "123456"
+        "username": "maria.conselheirolafaiete",
+        "password": "Maria@25*"
       },
       "salas": [
         {
           "id": "sala01",
-          "nome": "01 - Thaís",
-          "profissional": "Thaís",
+          "nome": "1 - CLAUDIA",
+          "profissional": "CLAUDIA",
           "ativo": true
         },
         {
           "id": "sala02",
-          "nome": "02 - Suporte",
-          "profissional": "Suporte",
-          "ativo": true
-        },
-        {
-          "id": "sala03",
-          "nome": "03 - Mariana",
-          "profissional": "Mariana",
-          "ativo": false
-        }
-      ],
-      "horarios": {
-        "segunda_sexta": {
-          "inicio": "08:00",
-          "fim": "20:00"
-        },
-        "sabado": {
-          "inicio": "08:00",
-          "fim": "16:00"
-        },
-        "domingo": null
-      },
-      "duracaoAvaliacao": 60,
-      "cacheIntervalMin": 30,
-      "ativo": true
-    },
-    "magrass-betim": {
-      "nome": "Magrass Betim",
-      "unobject": {
-        "url": "https://app.unobject.com.br/login",
-        "username": "fernanda.betim",
-        "password": "080913"
-      },
-      "salas": [
-        {
-          "id": "sala01",
-          "nome": "01 - Fernanda",
-          "profissional": "Fernanda",
-          "ativo": true
-        },
-        {
-          "id": "sala02",
-          "nome": "02 - Beatriz",
-          "profissional": "Beatriz",
+          "nome": "2 - JOICE",
+          "profissional": "JOICE",
           "ativo": true
         }
       ],
       "horarios": {
         "segunda_sexta": {
-          "inicio": "08:00",
+          "inicio": "09:00",
           "fim": "20:00"
         },
         "sabado": {
-          "inicio": "08:00",
+          "inicio": "09:00",
           "fim": "16:00"
         },
         "domingo": null

@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: mcp-magrass-barropreto
+    container_name: mcp-magrass-lafaiete
     restart: unless-stopped
     env_file:
       - .env
