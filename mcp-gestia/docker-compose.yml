@@ -1,0 +1,20 @@
+services:
+  mcp-gestia:
+    build: .
+    container_name: mcp-gestia
+    restart: unless-stopped
+    ports:
+      - "3202:3202"
+    environment:
+      - GESTIA_BASE_URL=https://api-drhair.gestiaerp.com.br
+      - GESTIA_JWK_PATH=/app/keys/private.jwk.json
+      - GESTIA_USER_ID=53
+      - PORT=3202
+    volumes:
+      - ./keys:/app/keys:ro
+    networks:
+      - doca-bay
+
+networks:
+  doca-bay:
+    external: true

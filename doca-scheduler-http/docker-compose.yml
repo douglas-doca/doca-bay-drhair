@@ -1,0 +1,20 @@
+services:
+  doca-scheduler:
+    build: .
+    container_name: doca-scheduler
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config:ro
+    environment:
+      - PORT=3001
+      - CONFIG_PATH=/app/config/tenants.json
+      - DATA_DIR=/app/data
+      - NODE_ENV=production
+      - TZ=America/Sao_Paulo
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

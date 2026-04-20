@@ -1,12 +1,13 @@
 // ============================================
-// DOCA-OCTA — MCP Server (Dr. Hair Contagem)
-// V2.1.0 — Streamable HTTP (migrado de SSE)
-// 🔧 TOOLS: 39 tools organizadas por domínio
+// DOCA-OCTA — MCP Server (Dr. Hair — GestIA)
+// V2.1.0 — Streamable HTTP
+// 🔧 TOOLS: 57 tools organizadas por domínio
+// Bay GestIA: lojas que usam Gest ERP
+// Porta: 3103
 // ============================================
 
 import "./instrumentation.js";
 import "dotenv/config";
-
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -26,16 +27,28 @@ import { emotionService } from "./services/emotion.service.js";
 import { supabaseService } from "./services/supabase.service.js";
 import { clientService } from "./services/client.service.js";
 import { getLeadMemory, generateMemorySummary, processMemoryPipeline } from "./services/memory.service.js";
-import { schedulerService } from "./services/scheduler.service.js";
+
+// ── GestIA Client ──
+import { GestiaClient } from "./services/gestia-client.js";
+
+const GESTIA_BASE_URL = process.env.GESTIA_BASE_URL || "https://api-drhair.gestiaerp.com.br";
+const GESTIA_JWK_PATH = process.env.GESTIA_JWK_PATH || "/app/keys/private.jwk.json";
+const GESTIA_USER_ID = Number(process.env.GESTIA_USER_ID) || 53;
+
+const gestiaClient = new GestiaClient({
+  baseUrl: GESTIA_BASE_URL,
+  privateJwkPath: GESTIA_JWK_PATH,
+  userId: GESTIA_USER_ID,
+});
 
 // ============================================
 // Server Configuration
 // ============================================
 
-const SERVER_NAME = "mcp-doca-v2";
+const SERVER_NAME = "bay-drhair-gest";
 const SERVER_VERSION = "2.1.0";
 
-logger.separator("MCP-DOCA-V2 Server (Streamable HTTP)");
+logger.separator("Bay Dr. Hair GestIA (Streamable HTTP)");
 logger.info(`Starting ${SERVER_NAME} v${SERVER_VERSION}`);
 
 function getCurrentTenant(): string {
@@ -43,7 +56,7 @@ function getCurrentTenant(): string {
 }
 
 // ============================================
-// TOOLS DEFINITION — 39 tools
+// TOOLS DEFINITION — 57 tools
 // ============================================
 
 const TOOLS = [
@@ -152,32 +165,175 @@ const TOOLS = [
     description: "Busca fotos de antes/depois e depoimentos para prova social.",
     inputSchema: { type: "object", properties: { tenant_id: { type: "string" }, regiao: { type: "string" }, limit: { type: "number" } }, required: [] as string[] },
   },
-  // ── AGENDAMENTO (5 tools) ──
+
+  // ══════════════════════════════════════════════════════════════
+  //  GESTIA — AGENDA (8 tools)
+  // ══════════════════════════════════════════════════════════════
   {
-    name: "consultar_horarios",
-    description: "Consulta horários disponíveis para agendamento em uma data específica.",
-    inputSchema: { type: "object", properties: { tenant_id: { type: "string" }, data: { type: "string" } }, required: ["data"] },
+    name: "gestia_combos_cadastro",
+    description: "Retorna TUDO que precisa pra agendar: profissionais com grade ativa, salas, procedimentos, situações e cores. Chamar no início da conversa pra saber o que oferecer ao lead. Requer unitId.",
+    inputSchema: { type: "object", properties: { unitId: { type: "number", description: "ID da unidade no Gest" } }, required: ["unitId"] },
   },
   {
-    name: "agendar_consulta",
-    description: "Agenda uma consulta/avaliação para o lead.",
-    inputSchema: { type: "object", properties: { tenant_id: { type: "string" }, lead_id: { type: "string" }, telefone: { type: "string" }, nome: { type: "string" }, data: { type: "string" }, horario: { type: "string" }, tipo: { type: "string" } }, required: ["nome", "data", "horario", "telefone"] },
+    name: "gestia_consultar_agenda",
+    description: "Consulta horários já agendados num período. Útil pra ver disponibilidade. Retorna lista de agendamentos com profissional, sala, cliente, situação.",
+    inputSchema: { type: "object", properties: { unitId: { type: "number", description: "ID da unidade" }, dataInicio: { type: "string", description: "Data início YYYY-MM-DD" }, dataFim: { type: "string", description: "Data fim YYYY-MM-DD" } }, required: ["unitId", "dataInicio", "dataFim"] },
   },
   {
-    name: "buscar_agendamentos",
-    description: "Busca agendamentos de um lead ou de uma data específica.",
-    inputSchema: { type: "object", properties: { tenant_id: { type: "string" }, lead_id: { type: "string" }, telefone: { type: "string" }, data: { type: "string" } }, required: [] as string[] },
+    name: "gestia_agendar",
+    description: "Cria um agendamento no Gest. Usa idDoCliente (existente) OU idDoProspect (lead novo). A API valida grade do profissional e conflitos.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        unitId: { type: "number", description: "ID da unidade" },
+        data: { type: "string", description: "Data YYYY-MM-DD" },
+        horaInicial: { type: "string", description: "Hora início HH:MM" },
+        horaFinal: { type: "string", description: "Hora fim HH:MM" },
+        idDoProfissional: { type: "number", description: "ID do profissional" },
+        idDoCliente: { type: "number", description: "ID do cliente (se já existir)" },
+        idDoProspect: { type: "number", description: "ID do prospect (lead novo)" },
+        idDoProcedimento: { type: "number", description: "ID do procedimento" },
+        idDaSala: { type: "number", description: "ID da sala (opcional)" },
+        observacao: { type: "string", description: "Observação (origem do lead, contexto da conversa)" },
+      },
+      required: ["unitId", "data", "horaInicial", "horaFinal", "idDoProfissional", "idDoProcedimento"],
+    },
   },
   {
-    name: "atualizar_agendamento",
-    description: "Atualiza status de um agendamento.",
-    inputSchema: { type: "object", properties: { tenant_id: { type: "string" }, agendamento_id: { type: "string" }, status: { type: "string", enum: ["confirmado", "cancelado", "remarcado", "realizado", "no_show"] }, nova_data: { type: "string" }, novo_horario: { type: "string" } }, required: ["agendamento_id", "status"] },
+    name: "gestia_alterar_situacao_agenda",
+    description: "Altera situação de um agendamento (ex: Marcado→Confirmado). Situações: 1=Marcado, 2=Confirmado, 3=Aguardando, 4=Em atendimento, 5=Atendido.",
+    inputSchema: { type: "object", properties: { unitId: { type: "number" }, idAgendamento: { type: "number" }, idSituacao: { type: "number" } }, required: ["unitId", "idAgendamento", "idSituacao"] },
   },
   {
-    name: "horarios_disponiveis",
-    description: "Alias para consultar_horarios.",
-    inputSchema: { type: "object", properties: { tenant_id: { type: "string" }, data: { type: "string" } }, required: ["data"] },
+    name: "gestia_excluir_agendamento",
+    description: "Exclui um agendamento pelo ID.",
+    inputSchema: { type: "object", properties: { unitId: { type: "number" }, idAgendamento: { type: "number" } }, required: ["unitId", "idAgendamento"] },
   },
+  {
+    name: "gestia_agenda_por_cliente",
+    description: "Consulta agendamentos de um cliente específico.",
+    inputSchema: { type: "object", properties: { unitId: { type: "number" }, idDoCliente: { type: "number" } }, required: ["unitId", "idDoCliente"] },
+  },
+  {
+    name: "gestia_agenda_por_prospect",
+    description: "Consulta agendamentos de um prospect (lead).",
+    inputSchema: { type: "object", properties: { unitId: { type: "number" }, idDoProspect: { type: "number" } }, required: ["unitId", "idDoProspect"] },
+  },
+  {
+    name: "gestia_horarios_funcionamento",
+    description: "Retorna horários de funcionamento da unidade (dias da semana, hora abertura/fechamento).",
+    inputSchema: { type: "object", properties: { unitId: { type: "number" } }, required: ["unitId"] },
+  },
+
+  // ══════════════════════════════════════════════════════════════
+  //  GESTIA — PROSPECT / LEAD (2 tools)
+  // ══════════════════════════════════════════════════════════════
+  {
+    name: "gestia_criar_prospect",
+    description: "Cria um lead novo (prospect) no Gest. Retorna o ID do prospect criado. Telefone: ddd (number) + numero (string sem DDD).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        unitId: { type: "number" },
+        nomeCompleto: { type: "string", description: "Nome completo do lead" },
+        ddd: { type: "number", description: "DDD do celular (ex: 31)" },
+        numero: { type: "string", description: "Número sem DDD (ex: 999990000)" },
+        email: { type: "string", description: "Email (opcional)" },
+      },
+      required: ["unitId", "nomeCompleto", "ddd", "numero"],
+    },
+  },
+  {
+    name: "gestia_listar_prospects",
+    description: "Lista prospects (leads) da unidade.",
+    inputSchema: { type: "object", properties: { unitId: { type: "number" }, pageSize: { type: "number", description: "Quantidade (default 10)" } }, required: ["unitId"] },
+  },
+
+  // ══════════════════════════════════════════════════════════════
+  //  GESTIA — CLIENTE (2 tools)
+  // ══════════════════════════════════════════════════════════════
+  {
+    name: "gestia_buscar_clientes",
+    description: "Busca clientes da unidade. Útil pra verificar se lead já é paciente antes de criar prospect.",
+    inputSchema: { type: "object", properties: { unitId: { type: "number" }, pageSize: { type: "number" } }, required: ["unitId"] },
+  },
+  {
+    name: "gestia_buscar_cliente_fast",
+    description: "Busca rápida de clientes (endpoint otimizado).",
+    inputSchema: { type: "object", properties: { unitId: { type: "number" } }, required: ["unitId"] },
+  },
+
+  // ══════════════════════════════════════════════════════════════
+  //  GESTIA — PROFISSIONAIS / SALAS / PROCEDIMENTOS (3 tools)
+  // ══════════════════════════════════════════════════════════════
+  {
+    name: "gestia_listar_profissionais",
+    description: "Lista profissionais da unidade.",
+    inputSchema: { type: "object", properties: { unitId: { type: "number" } }, required: ["unitId"] },
+  },
+  {
+    name: "gestia_listar_salas",
+    description: "Lista salas da unidade.",
+    inputSchema: { type: "object", properties: { unitId: { type: "number" } }, required: ["unitId"] },
+  },
+  {
+    name: "gestia_listar_procedimentos",
+    description: "Lista procedimentos disponíveis.",
+    inputSchema: { type: "object", properties: { unitId: { type: "number" }, pageSize: { type: "number" } }, required: ["unitId"] },
+  },
+
+  // ══════════════════════════════════════════════════════════════
+  //  GESTIA — ATENDIMENTO (4 tools)
+  // ══════════════════════════════════════════════════════════════
+  {
+    name: "gestia_atendimentos_em_andamento",
+    description: "Lista atendimentos em andamento na unidade. Retorna cliente, profissional, valor, comanda.",
+    inputSchema: { type: "object", properties: { unitId: { type: "number" } }, required: ["unitId"] },
+  },
+  {
+    name: "gestia_listar_atendimentos",
+    description: "Lista atendimentos da unidade com paginação.",
+    inputSchema: { type: "object", properties: { unitId: { type: "number" }, pageSize: { type: "number" } }, required: ["unitId"] },
+  },
+  {
+    name: "gestia_historico_atendimento",
+    description: "Histórico de um atendimento específico (log de ações).",
+    inputSchema: { type: "object", properties: { unitId: { type: "number" }, idAtendimento: { type: "number" } }, required: ["unitId", "idAtendimento"] },
+  },
+  {
+    name: "gestia_imagens_atendimento",
+    description: "Retorna metadados das imagens de tricoscopia de um atendimento.",
+    inputSchema: { type: "object", properties: { unitId: { type: "number" }, idAtendimento: { type: "number" } }, required: ["unitId", "idAtendimento"] },
+  },
+
+  // ══════════════════════════════════════════════════════════════
+  //  GESTIA — COMANDA (3 tools)
+  // ══════════════════════════════════════════════════════════════
+  {
+    name: "gestia_procedimentos_comanda",
+    description: "Lista procedimentos de uma comanda (tratamento do paciente).",
+    inputSchema: { type: "object", properties: { unitId: { type: "number" }, idComanda: { type: "number" } }, required: ["unitId", "idComanda"] },
+  },
+  {
+    name: "gestia_historico_comanda",
+    description: "Histórico de uma comanda (log de ações).",
+    inputSchema: { type: "object", properties: { unitId: { type: "number" }, idComanda: { type: "number" } }, required: ["unitId", "idComanda"] },
+  },
+  {
+    name: "gestia_parcelas_comanda",
+    description: "Lista parcelas de pagamento de uma comanda.",
+    inputSchema: { type: "object", properties: { unitId: { type: "number" }, idComanda: { type: "number" } }, required: ["unitId", "idComanda"] },
+  },
+
+  // ══════════════════════════════════════════════════════════════
+  //  GESTIA — UNIDADES (1 tool)
+  // ══════════════════════════════════════════════════════════════
+  {
+    name: "gestia_listar_unidades",
+    description: "Lista todas as unidades da rede Dr. Hair com endereço, CNPJ, horários.",
+    inputSchema: { type: "object", properties: { unitId: { type: "number", description: "ID de qualquer unidade (pra auth)" } }, required: ["unitId"] },
+  },
+
   // ── WAHA (5 tools) ──
   {
     name: "waha_send_message",
@@ -286,6 +442,178 @@ const RESOURCES = [
 ];
 
 // ============================================
+// GESTIA TOOL HANDLER (generic dispatcher)
+// ============================================
+
+async function handleGestiaTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+  const unitId = args.unitId as number;
+  if (!unitId) return { ok: false, error: "unitId obrigatório" };
+
+  switch (name) {
+    // ── AGENDA ──
+    case "gestia_combos_cadastro": {
+      const rawCombos = await gestiaClient.fetch(`/agenda/combosparacadastro?idDaUnidade=${unitId}`, { unitId });
+      // Filtrar retorno pra reduzir tokens
+      try {
+        const d = (rawCombos as any)?.data || rawCombos;
+        const slim: Record<string, unknown> = {};
+        if (d.profissionais) {
+          slim.profissionais = d.profissionais.map((p: any) => ({
+            id: p.id,
+            nome: p.nomeCompleto || p.nome,
+            horarios: (p.horariosParaAgenda || []).map((h: any) => ({
+              dia: h.diaDaSemana?.descricao,
+              inicio: h.horaInicial,
+              fim: h.horaFinal,
+            })),
+          }));
+        }
+        if (d.procedimentos) {
+          slim.procedimentos = d.procedimentos.map((p: any) => ({
+            id: p.id,
+            nome: p.nome || p.descricao,
+          }));
+        }
+        if (d.salas) {
+          slim.salas = d.salas.map((s: any) => ({
+            id: s.id,
+            nome: s.nome,
+          }));
+        }
+        if (d.situacoes) {
+          slim.situacoes = d.situacoes.map((s: any) => ({
+            id: s.id,
+            descricao: s.descricao,
+          }));
+        }
+        return { ok: true, data: slim };
+      } catch {}
+      return rawCombos;
+    }
+
+    case "gestia_consultar_agenda": {
+      const rawAgenda = await gestiaClient.fetch(`/agenda/consultarhorariosagendados?dataInicio=${args.dataInicio}&dataFim=${args.dataFim}`, { unitId });
+      // Filtrar retorno pra reduzir tokens (API retorna objetos gigantes)
+      try {
+        const items = (rawAgenda as any)?.data?.dadosDeHorarioAgendado || (rawAgenda as any)?.data || [];
+        if (Array.isArray(items)) {
+          const slim = items.map((a: any) => ({
+            id: a.id,
+            data: a.data?.split("T")[0],
+            horaInicial: a.horaInicial,
+            horaFinal: a.horaFinal,
+            profissional: a.profissional?.nomeCompleto || a.profissional?.nome || "N/A",
+            profissionalId: a.profissional?.id || a.idDoProfissional,
+            cliente: a.cliente?.nomeCompleto || a.prospect?.nomeCompleto || "N/A",
+            situacao: a.situacao?.descricao || "N/A",
+            sala: a.sala?.nome || null,
+            procedimento: a.procedimento?.nome || null,
+          }));
+          return { ok: true, data: slim, total: slim.length, dataInicio: args.dataInicio, dataFim: args.dataFim };
+        }
+      } catch {}
+      return rawAgenda;
+    }
+
+    case "gestia_agendar": {
+      if (!args.idDoCliente && !args.idDoProspect) return { ok: false, error: "Informe idDoCliente ou idDoProspect" };
+      const body: Record<string, unknown> = {
+        idDaUnidade: unitId,
+        data: `${args.data}T00:00:00`,
+        horaInicial: args.horaInicial,
+        horaFinal: args.horaFinal,
+        idDoProfissional: args.idDoProfissional,
+        idDoProcedimento: args.idDoProcedimento,
+      };
+      if (args.idDoCliente) body.idDoCliente = args.idDoCliente;
+      if (args.idDoProspect) body.idDoProspect = args.idDoProspect;
+      if (args.idDaSala) body.idDaSala = args.idDaSala;
+      if (args.observacao) body.observacao = args.observacao;
+      return gestiaClient.fetch("/agenda/inserir", { method: "POST", body, unitId });
+    }
+
+    case "gestia_alterar_situacao_agenda":
+      return gestiaClient.fetch("/agenda/alterarsituacao", {
+        method: "PUT",
+        body: { id: args.idAgendamento, situacao: { id: args.idSituacao } },
+        unitId,
+      });
+
+    case "gestia_excluir_agendamento":
+      return gestiaClient.fetch(`/agenda/${args.idAgendamento}`, { method: "DELETE", unitId });
+
+    case "gestia_agenda_por_cliente":
+      return gestiaClient.fetch(`/agenda/horariosagendadosporcliente?idDoCliente=${args.idDoCliente}`, { unitId });
+
+    case "gestia_agenda_por_prospect":
+      return gestiaClient.fetch(`/agenda/horariosagendadosporprospect?idDoProspect=${args.idDoProspect}`, { unitId });
+
+    case "gestia_horarios_funcionamento":
+      return gestiaClient.fetch("/agenda/unidade", { unitId });
+
+    // ── PROSPECT ──
+    case "gestia_criar_prospect": {
+      const prospectBody: Record<string, unknown> = {
+        nomeCompleto: args.nomeCompleto,
+        celular: { ddd: args.ddd, numero: args.numero, pais: "+55" },
+      };
+      if (args.email) prospectBody.email = args.email;
+      return gestiaClient.fetch("/prospect", { method: "POST", body: prospectBody, unitId });
+    }
+
+    case "gestia_listar_prospects":
+      return gestiaClient.fetch(`/prospect?pageSize=${(args.pageSize as number) || 10}`, { unitId });
+
+    // ── CLIENTE ──
+    case "gestia_buscar_clientes":
+      return gestiaClient.fetch(`/cliente?pageSize=${(args.pageSize as number) || 10}`, { unitId });
+
+    case "gestia_buscar_cliente_fast":
+      return gestiaClient.fetch("/cliente/fast", { unitId });
+
+    // ── PROFISSIONAIS / SALAS / PROCEDIMENTOS ──
+    case "gestia_listar_profissionais":
+      return gestiaClient.fetch("/profissional", { unitId });
+
+    case "gestia_listar_salas":
+      return gestiaClient.fetch("/sala", { unitId });
+
+    case "gestia_listar_procedimentos":
+      return gestiaClient.fetch(`/procedimento?pageSize=${(args.pageSize as number) || 20}`, { unitId });
+
+    // ── ATENDIMENTO ──
+    case "gestia_atendimentos_em_andamento":
+      return gestiaClient.fetch("/atendimento/emandamento", { unitId });
+
+    case "gestia_listar_atendimentos":
+      return gestiaClient.fetch(`/atendimento?pageSize=${(args.pageSize as number) || 10}`, { unitId });
+
+    case "gestia_historico_atendimento":
+      return gestiaClient.fetch(`/atendimento/${args.idAtendimento}/historico`, { unitId });
+
+    case "gestia_imagens_atendimento":
+      return gestiaClient.fetch(`/atendimento/${args.idAtendimento}/imagens`, { unitId });
+
+    // ── COMANDA ──
+    case "gestia_procedimentos_comanda":
+      return gestiaClient.fetch(`/comanda/${args.idComanda}/procedimentos`, { unitId });
+
+    case "gestia_historico_comanda":
+      return gestiaClient.fetch(`/comanda/${args.idComanda}/historico`, { unitId });
+
+    case "gestia_parcelas_comanda":
+      return gestiaClient.fetch(`/comanda/${args.idComanda}/parcelas`, { unitId });
+
+    // ── UNIDADES ──
+    case "gestia_listar_unidades":
+      return gestiaClient.fetch("/unidade", { unitId });
+
+    default:
+      return { ok: false, error: `GestIA tool desconhecida: ${name}` };
+  }
+}
+
+// ============================================
 // TOOL HANDLERS
 // ============================================
 
@@ -295,6 +623,13 @@ async function handleToolCall(name: string, args: Record<string, unknown>) {
 
   try {
     let result: unknown;
+
+    // ── GestIA tools — dispatch to dedicated handler ──
+    if (name.startsWith("gestia_")) {
+      result = await handleGestiaTool(name, args);
+      logger.mcp(`Tool ${name} completed successfully`);
+      return { content: [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result, null, 2) }] };
+    }
 
     switch (name) {
       case "buscar_lead": {
@@ -434,38 +769,6 @@ async function handleToolCall(name: string, args: Record<string, unknown>) {
         } catch { result = { error: "Erro ao buscar provas sociais" }; }
         break;
       }
-      case "consultar_horarios":
-      case "horarios_disponiveis": {
-        try { result = await schedulerService.consultarHorarios("drhair-contagem", args.data as string, tenantId); }
-        catch (err: any) { result = { error: `Erro ao consultar horários: ${err.message}` }; }
-        break;
-      }
-      case "agendar_consulta": {
-        try {
-          result = await schedulerService.criarAgendamento("drhair-contagem", { telefone: args.telefone as string, data: args.data as string, horario: args.horario as string, nome: args.nome as string, dataNascimento: args.data_nascimento as string, leadId: args.lead_id as string }, tenantId);
-        } catch (err: any) {
-          if (err.message?.includes("duplicate") || err.message?.includes("já existe")) { result = { success: true, message: "Agendamento já existe (duplicate key). Horário reservado!", duplicate: true }; }
-          else { result = { error: `Erro ao agendar: ${err.message}` }; }
-        }
-        break;
-      }
-      case "buscar_agendamentos": {
-        try {
-          let q = `tenant_id=eq.${tenantId}`;
-          if (args.lead_id) q += `&lead_id=eq.${args.lead_id}`;
-          if (args.telefone) q += `&telefone=eq.${args.telefone}`;
-          if (args.data) q += `&data=eq.${args.data}`;
-          q += "&order=data.desc,horario.desc&limit=10";
-          result = await supabaseService.request<any[]>("GET", "agendamentos", { query: q });
-        } catch { result = { error: "Erro ao buscar agendamentos" }; }
-        break;
-      }
-      case "atualizar_agendamento": {
-        try {
-          result = await schedulerService.atualizarAgendamento(args.telefone as string || "", args.nova_data as string || "", args.novo_horario as string || "", { nome: args.nome as string, dataNascimento: args.data_nascimento as string });
-        } catch (err: any) { result = { error: `Erro ao atualizar agendamento: ${err.message}` }; }
-        break;
-      }
       case "waha_send_message": result = await wahaService.sendMessage({ chatId: args.phone as string, text: args.message as string }); break;
       case "waha_send_image": result = await wahaService.sendImage(args.phone as string, args.imageUrl as string, args.caption as string | undefined); break;
       case "waha_get_messages": result = await wahaService.getMessages(args.phone as string, (args.limit as number) || 50); break;
@@ -565,17 +868,16 @@ async function main() {
       }
     } catch { logger.warn("Supabase initialize skipped/failed (continuing)..."); }
 
-    const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3100;
+    const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3103;
 
     const httpServer = createServer(async (req, res) => {
       try {
         if (req.url?.startsWith("/mcp") && req.method === "POST") { await handleStreamableHttp(req, res); return; }
         if (req.url === "/health") {
           res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ status: "ok", transport: "streamable-http", tools: TOOLS.length, version: SERVER_VERSION }));
+          res.end(JSON.stringify({ status: "ok", transport: "streamable-http", tools: TOOLS.length, version: SERVER_VERSION, erp: "gestia" }));
           return;
         }
-        // Legacy SSE — return 410
         if (req.url?.startsWith("/sse") || (req.url?.startsWith("/message") && req.method === "POST")) {
           res.writeHead(410);
           res.end(JSON.stringify({ error: "SSE deprecated. Use POST /mcp" }));
@@ -593,6 +895,7 @@ async function main() {
       logger.info(`${SERVER_NAME} v${SERVER_VERSION} (Streamable HTTP) rodando na porta ${PORT} 🚀`);
       logger.info(`Endpoint: POST /mcp`);
       logger.info(`Tools available: ${TOOLS.length}`);
+      logger.info(`GestIA Base URL: ${GESTIA_BASE_URL}`);
       console.error("📁 Clientes disponíveis:", clientService.listClients());
       logger.separator();
     });

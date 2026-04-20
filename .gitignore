@@ -1,1 +1,14 @@
 kai/
+node_modules/
+*.tar.gz
+dist/
+.env
+node_modules/
+*.tar.gz
+dist/
+.env
+.env
+*.env
+secrets.json
+private.jwk.json
+*.tar.gz
