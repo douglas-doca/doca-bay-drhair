@@ -121,7 +121,7 @@ const TOOLS = [
   {
     name: "salvar_memoria",
     description: "Salva uma memória sobre o lead.",
-    inputSchema: { type: "object", properties: { tenant_id: { type: "string" }, lead_id: { type: "string" }, telefone: { type: "string" }, tipo: { type: "string", enum: ["fato", "objection", "commitment", "preference", "context"] }, conteudo: { type: "string" } }, required: ["conteudo"] },
+    inputSchema: { type: "object", properties: { tenant_id: { type: "string" }, lead_id: { type: "string" }, telefone: { type: "string" }, tipo: { type: "string", enum: ["fact", "objection", "commitment", "preference", "semantic", "episodic"] }, conteudo: { type: "string" } }, required: ["conteudo"] },
   },
   {
     name: "melhor_estrategia",
@@ -1027,8 +1027,17 @@ async function handleToolCall(name: string, args: Record<string, unknown>) {
         let leadId = args.lead_id as string;
         if (!leadId && args.telefone) { const lead = await supabaseService.getLeadByPhone(tenantId, args.telefone as string); leadId = lead?.id || ""; }
         if (!leadId) { result = { error: "Lead não encontrado" }; break; }
-        const memoryData = { tenant_id: tenantId, lead_id: leadId, type: (args.tipo as string) || "context", content: args.conteudo as string, created_at: new Date().toISOString() };
-        await supabaseService.request("POST", "lead_memories", { body: memoryData });
+        const MEM_TYPE_MAP: Record<string, string> = { fato: "fact", contexto: "semantic", context: "semantic" };
+        const MEM_TYPES_OK = ["episodic", "semantic", "preference", "fact", "objection", "commitment"];
+        let memTipo = (args.tipo as string) || "fact";
+        memTipo = MEM_TYPE_MAP[memTipo] || memTipo;
+        if (!MEM_TYPES_OK.includes(memTipo)) memTipo = "fact";
+        const memoryData = { tenant_id: tenantId, lead_id: leadId, type: memTipo, content: args.conteudo as string, created_at: new Date().toISOString() };
+        const savedMem = await supabaseService.request<any[]>("POST", "lead_memories", { body: memoryData });
+        if (!savedMem || (Array.isArray(savedMem) && savedMem.length === 0)) {
+          result = { error: "Falha ao salvar memória" };
+          break;
+        }
         result = { success: true, message: "Memória salva", ...memoryData };
         break;
       }
