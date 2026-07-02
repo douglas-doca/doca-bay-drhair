@@ -1,0 +1,45 @@
+{
+  "tenants": {
+    "drhair-contagem": {
+      "nome": "Dr. Hair Contagem",
+      "unobject": {
+        "login": "malyck.ia.drhair.contagem",
+        "password": "Malyck123$$",
+        "companyId": 8654,
+        "roomIds": [1, 2]
+      },
+      "salas": {
+        "1": "Deborah",
+        "2": "Juliana"
+      },
+      "horarios": {
+        "segunda_sexta": { "inicio": "08:00", "fim": "20:00" },
+        "sabado": { "inicio": "09:00", "fim": "12:00" },
+        "domingo": null
+      },
+      "duracaoAvaliacao": 40,
+      "cacheIntervalMin": 15,
+      "ativo": true
+    },
+    "magrass-barbacena": {
+      "nome": "Magrass Barbacena",
+      "unobject": {
+        "login": "daniel.barbacena",
+        "password": "Mudar123",
+        "companyId": 5170,
+        "roomIds": [7994, 7993]
+      },
+      "salas": {
+        "7994": "Ludmila",
+        "7993": "Tayná"
+      },
+      "horarios": {
+        "segunda_sexta": { "inicio": "09:00", "fim": "20:00" },
+        "sabado": { "inicio": "09:00", "fim": "16:00" },
+        "domingo": null
+      },
+      "duracaoAvaliacao": 60,
+      "ativo": true
+    }
+  }
+}

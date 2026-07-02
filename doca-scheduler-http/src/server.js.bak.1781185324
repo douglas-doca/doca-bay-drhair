@@ -211,18 +211,6 @@ app.post('/api/:tenant/agendar', resolveTenant, async (req, res) => {
   }
 });
 
-// Comandas (orders) por cliente
-app.get('/api/:tenant/orders', resolveTenant, async (req, res) => {
-  try {
-    const customerId = req.query.customerId ? parseInt(req.query.customerId) : null;
-    const orders = await req.client.getOrders({ customerId });
-    res.json({ success: true, count: orders.length, orders });
-  } catch (err) {
-    console.error(`[${req.tenantId}] /orders error:`, err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 // Buscar cliente
 app.get('/api/:tenant/customer', resolveTenant, async (req, res) => {
   try {

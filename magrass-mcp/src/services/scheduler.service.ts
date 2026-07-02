@@ -6,6 +6,7 @@
 // ✅ Cache Supabase + fallback scraper
 // ✅ Reserva via agendamentos (Supabase)
 // ✅ Identificação automática de sala
+// ✅ Adaptador: normaliza formato novo do scheduler (rooms/available) → canônico (salas/horarios)
 // ============================================
 
 import { logger } from "../utils/logger.js";
@@ -88,6 +89,70 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_SCHEDULER_URL = "http://doca-scheduler:3001";
 
 // ============================================
+// ADAPTADOR: NOVO FORMATO → CANÔNICO
+// ============================================
+
+/**
+ * O novo scheduler retorna:
+ *   { success, rooms: [{ id, name: "1 - LUDMILA", available: ["18:00",...], booked: [...] }] }
+ *
+ * Mas o código legado (e os prompts) esperam:
+ *   { success, salas: { [id]: { nome, profissional, horarios } }, horarios: [], total }
+ *
+ * Normaliza o formato novo pro formato canônico. Se já vier no formato antigo,
+ * passa direto. Se vier mix, completa só o que está faltando.
+ */
+function normalizarRespostaScheduler(raw: any): any {
+  if (!raw || !raw.success) return raw;
+
+  // Já tem salas + horarios: considera canônico
+  if (raw.salas && raw.horarios) return raw;
+
+  // Formato novo com rooms[].available
+  if (Array.isArray(raw.rooms)) {
+    const salas: Record<string, SalaInfo> = {};
+    const todosHorarios: string[] = [];
+
+    for (const room of raw.rooms) {
+      const roomId = String(room.id ?? '');
+      if (!roomId) continue;
+
+      const horariosRoom = Array.isArray(room.available) ? room.available : [];
+
+      // "1 - LUDMILA" → profissional: "LUDMILA"
+      const parts = String(room.name || '').split(' - ');
+      const profissional = parts.length > 1
+        ? parts.slice(1).join(' - ').trim()
+        : (parts[0]?.trim() || '');
+
+      salas[roomId] = {
+        nome: room.name || `Sala ${roomId}`,
+        profissional,
+        horarios: horariosRoom,
+      };
+
+      todosHorarios.push(...horariosRoom);
+    }
+
+    // Dedup + ordenação cronológica
+    const horariosUnicos = [...new Set(todosHorarios)].sort((a, b) => {
+      const [hA, mA] = a.split(':').map(Number);
+      const [hB, mB] = b.split(':').map(Number);
+      return (hA * 60 + (mA || 0)) - (hB * 60 + (mB || 0));
+    });
+
+    return {
+      ...raw,
+      salas,
+      horarios: horariosUnicos,
+      total: horariosUnicos.length,
+    };
+  }
+
+  return raw;
+}
+
+// ============================================
 // SCHEDULER SERVICE
 // ============================================
 
@@ -136,7 +201,7 @@ class SchedulerService {
    * Usado nas rotas /api/:franquia/ do novo scheduler.
    */
   resolveFranquiaSlug(clientId: string): string {
-    // O clientId geralmente JÁ é o slug (ex: "drhair-contagem")
+    // O clientId geralmente JÁ é o slug (ex: "magrass-barbacena")
     return clientId;
   }
 
@@ -326,20 +391,45 @@ class SchedulerService {
         const bloqueados = await this.getHorariosBloqueados(resolvedTenantId, dataISO);
         scraperResult.horarios = scraperResult.horarios.filter(h => !bloqueados.includes(h));
         
-        // Filtrar por duracao da avaliacao (60min consecutivos)
+        // Filtrar por duração da avaliação (60min).
+        // Detecta a granularidade dos slots:
+        // - Se todos os slots estão em hora cheia (:00) → slots já são de 60min, pula filtro
+        // - Senão, calcula o intervalo entre slots e filtra slots consecutivos o suficiente pra cobrir 60min
         const duracaoMin = 60;
-        const slotsNecessarios = duracaoMin / 10;
-        const todosH = [...scraperResult.horarios];
-        scraperResult.horarios = todosH.filter(h => {
-          const [hr, mn] = h.split(':').map(Number);
-          const inicioMin = hr * 60 + mn;
-          for (let i = 1; i < slotsNecessarios; i++) {
-            const nextMin = inicioMin + (i * 10);
-            const nextH = String(Math.floor(nextMin / 60)).padStart(2, '0') + ':' + String(nextMin % 60).padStart(2, '0');
-            if (!todosH.includes(nextH)) return false;
+        const todosH = [...scraperResult.horarios].sort();
+
+        if (todosH.length > 1) {
+          const todosHoraCheia = todosH.every(h => h.endsWith(':00'));
+          let granularidadeMin = 10; // default: 10min
+
+          if (todosHoraCheia) {
+            const [h1, m1] = todosH[0].split(':').map(Number);
+            const [h2, m2] = todosH[1].split(':').map(Number);
+            const diff = (h2 * 60 + m2) - (h1 * 60 + m1);
+            if (diff >= duracaoMin) {
+              granularidadeMin = 0;
+            } else {
+              granularidadeMin = diff;
+            }
           }
-          return true;
-        });
+
+          if (granularidadeMin > 0 && granularidadeMin < duracaoMin) {
+            const slotsNecessarios = duracaoMin / granularidadeMin;
+            scraperResult.horarios = todosH.filter(h => {
+              const [hr, mn] = h.split(':').map(Number);
+              const inicioMin = hr * 60 + mn;
+              for (let i = 1; i < slotsNecessarios; i++) {
+                const nextMin = inicioMin + (i * granularidadeMin);
+                const nextH = String(Math.floor(nextMin / 60)).padStart(2, '0') + ':' + String(nextMin % 60).padStart(2, '0');
+                if (!todosH.includes(nextH)) return false;
+              }
+              return true;
+            });
+          } else {
+            scraperResult.horarios = todosH;
+          }
+        }
+
         scraperResult.total = scraperResult.horarios.length;
         if (scraperResult.salas) this.salvarSalasEmMemoria(resolvedTenantId, dataISO, scraperResult.salas);
       }
@@ -388,10 +478,16 @@ class SchedulerService {
         return { success: false, error: `API retornou ${response.status}: ${errorText}` };
       }
 
-      const result = await response.json() as any;
+      // ✨ Normaliza formato novo (rooms/available) → canônico (salas/horarios)
+      const raw = await response.json() as any;
+      const result = normalizarRespostaScheduler(raw);
 
       if (result.success) {
-        logger.info("✅ Horários do scheduler", { total: result.total, franquia }, "SCHEDULER");
+        logger.info("✅ Horários do scheduler", {
+          total: result.total,
+          franquia,
+          normalizado: !!(raw.rooms && !raw.salas),
+        }, "SCHEDULER");
         return {
           success: true,
           data: dataISO,

@@ -3,13 +3,14 @@
 // DOCA-OCTA — MCP Server (Magrass Barro Preto)
 // Model Context Protocol Server
 //
-// 🔧 TOOLS: 39 tools organizadas por domínio
+// 🔧 TOOLS: 40 tools organizadas por domínio
 // Cada tool mapeia para services reais do DOCA-OCTA
 // ============================================
 import "./instrumentation.js";
 import "dotenv/config";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer } from "http";
 import { CallToolRequestSchema, ListToolsRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema, } from "@modelcontextprotocol/sdk/types.js";
 import { logger } from "./utils/logger.js";
@@ -24,7 +25,7 @@ import { schedulerService } from "./services/scheduler.service.js";
 // ============================================
 // Server Configuration
 // ============================================
-const SERVER_NAME = "mcp-magrass-barropreto";
+const SERVER_NAME = "mcp-magrass-lafaiete";
 const SERVER_VERSION = "2.0.0";
 logger.separator("MCP-DOCA-V2 Server");
 logger.info(`Starting ${SERVER_NAME} v${SERVER_VERSION}`);
@@ -35,7 +36,7 @@ function getCurrentTenant() {
     return process.env.TENANT_ID || "e8a4b2c9-3d1e-47c8-90a1-b2c3d4e5f6a7";
 }
 // ============================================
-// TOOLS DEFINITION — 39 tools
+// TOOLS DEFINITION — 40 tools
 // ============================================
 const TOOLS = [
     // ──────────────────────────────────────────
@@ -349,6 +350,33 @@ const TOOLS = [
                 tipo: { type: "string", description: "Tipo (avaliacao, retorno, sessao). Padrão: avaliacao" },
             },
             required: ["nome", "data", "horario", "telefone"],
+        },
+    },
+    {
+        name: "marcar_compromisso_confirmado",
+        description: "Marca que o lead confirmou o compromisso no momento do agendamento (respondeu 'sim' ao 'posso contar com você?'). Deve ser chamada APENAS após o lead responder positivamente à pergunta de compromisso.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                tenant_id: { type: "string", description: "ID do tenant" },
+                agendamento_id: { type: "string", description: "ID do agendamento criado em agendar_consulta" },
+                telefone: { type: "string", description: "Telefone do lead (alternativa ao agendamento_id)" },
+                data: { type: "string", description: "Data do agendamento no formato YYYY-MM-DD (usado com telefone)" },
+            },
+            required: [],
+        },
+    },
+    {
+        name: "marcar_d1_confirmado",
+        description: "Marca que o lead confirmou presença na VÉSPERA da consulta (D-1), após responder 'sim/pode contar/confirmo' à mensagem proativa de confirmação enviada pelo cron no dia anterior. NÃO confundir com marcar_compromisso_confirmado (que é no momento do agendamento inicial).",
+        inputSchema: {
+            type: "object",
+            properties: {
+                tenant_id: { type: "string", description: "ID do tenant" },
+                agendamento_id: { type: "string", description: "ID do agendamento (opcional, se já conhecido)" },
+                telefone: { type: "string", description: "Telefone do lead (apenas dígitos, usado pra buscar próximo agendamento se agendamento_id não informado)" },
+            },
+            required: [],
         },
     },
     {
@@ -939,7 +967,7 @@ async function handleToolCall(name, args) {
                 const data = args.data;
                 try {
                     // consultarHorarios(clientId, data, tenantId?)
-                    result = await schedulerService.consultarHorarios("magrass-barro-preto", data, tenantId);
+                    result = await schedulerService.consultarHorarios("magrass-barbacena", data, tenantId);
                 }
                 catch (err) {
                     result = { error: `Erro ao consultar horários: ${err.message}` };
@@ -947,9 +975,10 @@ async function handleToolCall(name, args) {
                 break;
             }
             case "agendar_consulta": {
+                let agendamento;
                 try {
                     // criarAgendamento(clientId, dados, tenantId?)
-                    result = await schedulerService.criarAgendamento("magrass-barro-preto", {
+                    agendamento = await schedulerService.criarAgendamento("magrass-barbacena", {
                         telefone: args.telefone,
                         data: args.data,
                         horario: args.horario,
@@ -965,6 +994,208 @@ async function handleToolCall(name, args) {
                     else {
                         result = { error: `Erro ao agendar: ${err.message}` };
                     }
+                    break;
+                }
+                // 🎁 HOOK AUTOMÁTICO DE VOUCHER (V4.4)
+                // Após agendar com sucesso, envia voucher imediatamente — sem depender do modelo lembrar.
+                // Lê voucher_url e voucher_caption direto do config.json do tenant (montado em /app/clientes/).
+                let voucherStatus = "skipped";
+                let voucherError;
+                const agendamentoId = agendamento?.id || agendamento?.agendamentoId;
+                try {
+                    // 1. Lê config.json do tenant direto do filesystem (montado via volume Docker)
+                    let voucherUrl;
+                    let voucherCaption;
+                    try {
+                        const fs = await import("fs");
+                        const configPath = "/app/clientes/magrass-barbacena/config.json";
+                        const raw = fs.readFileSync(configPath, "utf-8");
+                        const cfg = JSON.parse(raw);
+                        voucherUrl = cfg?.prompt_vars?.voucher_url;
+                        voucherCaption = cfg?.prompt_vars?.voucher_caption;
+                    }
+                    catch (cfgErr) {
+                        logger.warn("[Voucher] ⚠️ Falha ao ler config.json", {
+                            error: cfgErr?.message,
+                            configPath: "/app/clientes/magrass-barbacena/config.json",
+                        });
+                    }
+                    if (!voucherUrl || !voucherCaption) {
+                        logger.info("[Voucher] ⚠️ Tenant sem voucher_url/voucher_caption configurado, pulando envio", {
+                            tenantId,
+                            hasUrl: !!voucherUrl,
+                            hasCaption: !!voucherCaption,
+                        });
+                        voucherStatus = "skipped";
+                    }
+                    else {
+                        // 2. Verifica idempotência: já tem voucher_enviado_em?
+                        let alreadySent = false;
+                        if (agendamentoId) {
+                            try {
+                                const check = await supabaseService.request("GET", "agendamentos", {
+                                    query: `id=eq.${agendamentoId}&select=voucher_enviado_em`,
+                                });
+                                if (check?.[0]?.voucher_enviado_em) {
+                                    alreadySent = true;
+                                    voucherStatus = "duplicate";
+                                    logger.info("[Voucher] ⏭️ Voucher já enviado anteriormente, pulando", {
+                                        agendamentoId,
+                                        previouslySentAt: check[0].voucher_enviado_em,
+                                    });
+                                }
+                            }
+                            catch { /* fail-open: tenta enviar */ }
+                        }
+                        // 3. Envia voucher se ainda não enviado
+                        if (!alreadySent) {
+                            const phone = args.telefone.replace(/\D/g, "");
+                            await wahaService.sendImage(phone, voucherUrl, voucherCaption);
+                            voucherStatus = "sent";
+                            logger.info("[Voucher] ✅ Enviado automaticamente após agendar_consulta", {
+                                agendamentoId,
+                                telefone: phone,
+                                tenantId,
+                            });
+                            // 4. Marca timestamp + status no agendamento (auditável)
+                            if (agendamentoId) {
+                                try {
+                                    await supabaseService.request("PATCH", "agendamentos", {
+                                        query: `id=eq.${agendamentoId}`,
+                                        body: {
+                                            voucher_enviado_em: new Date().toISOString(),
+                                            voucher_envio_status: "sent",
+                                        },
+                                    });
+                                }
+                                catch (auditErr) {
+                                    logger.warn("[Voucher] ⚠️ Falha ao marcar voucher_enviado_em (não-bloqueante)", {
+                                        agendamentoId,
+                                        error: auditErr?.message,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (voucherErr) {
+                    voucherStatus = "failed";
+                    voucherError = voucherErr?.message || "unknown";
+                    logger.error("[Voucher] ❌ Falha no envio automático (não-bloqueante)", {
+                        error: voucherError,
+                        agendamentoId,
+                        telefone: args.telefone,
+                        tenantId,
+                    });
+                    // Marca falha no agendamento (pra retry futuro)
+                    if (agendamentoId) {
+                        try {
+                            await supabaseService.request("PATCH", "agendamentos", {
+                                query: `id=eq.${agendamentoId}`,
+                                body: { voucher_envio_status: "failed" },
+                            });
+                        }
+                        catch { /* já falhou, ignora */ }
+                    }
+                }
+                // Retorna agendamento + status do voucher (pra modelo saber)
+                result = {
+                    ...agendamento,
+                    voucher: {
+                        status: voucherStatus,
+                        ...(voucherError ? { error: voucherError } : {}),
+                    },
+                };
+                break;
+            }
+            case "marcar_compromisso_confirmado": {
+                try {
+                    const agendamentoId = args.agendamento_id;
+                    const telefone = args.telefone;
+                    const data = args.data;
+                    let q;
+                    if (agendamentoId) {
+                        q = `tenant_id=eq.${tenantId}&id=eq.${agendamentoId}`;
+                    }
+                    else if (telefone && data) {
+                        q = `tenant_id=eq.${tenantId}&telefone=eq.${telefone}&data=eq.${data}&order=created_at.desc&limit=1`;
+                    }
+                    else {
+                        result = { error: "Informe agendamento_id ou telefone+data" };
+                        break;
+                    }
+                    const nowIso = new Date().toISOString();
+                    const updates = {
+                        confirmacao_lead: true,
+                        confirmacao_lead_em: nowIso,
+                        risco_no_show: "baixo",
+                    };
+                    const updated = await supabaseService.request("PATCH", "agendamentos", {
+                        query: q,
+                        body: updates,
+                    });
+                    if (!updated || (Array.isArray(updated) && updated.length === 0)) {
+                        result = { success: false, message: "Agendamento não encontrado pra marcar compromisso" };
+                    }
+                    else {
+                        logger.info(`✅ Compromisso confirmado`, { agendamentoId, telefone, tenantId });
+                        result = {
+                            success: true,
+                            message: "Compromisso confirmado com sucesso",
+                            confirmacao_lead_em: nowIso,
+                            agendamento: Array.isArray(updated) ? updated[0] : updated,
+                        };
+                    }
+                }
+                catch (err) {
+                    logger.error("marcar_compromisso_confirmado failed", err);
+                    result = { error: `Erro ao marcar compromisso: ${err.message}` };
+                }
+                break;
+            }
+            case "marcar_d1_confirmado": {
+                try {
+                    const agendamentoId = args.agendamento_id;
+                    const telefone = args.telefone;
+                    let q;
+                    if (agendamentoId) {
+                        q = `tenant_id=eq.${tenantId}&id=eq.${agendamentoId}`;
+                    }
+                    else if (telefone) {
+                        const cleanPhone = String(telefone).replace(/\D/g, "");
+                        const hoje = new Date().toISOString().split("T")[0];
+                        q = `tenant_id=eq.${tenantId}&telefone=eq.${cleanPhone}&data=gte.${hoje}&status=in.(pendente,confirmado,confirmado_crm)&order=data.asc&limit=1`;
+                    }
+                    else {
+                        result = { error: "Informe agendamento_id ou telefone" };
+                        break;
+                    }
+                    const nowIso = new Date().toISOString();
+                    const updates = {
+                        confirmou_d1: true,
+                        confirmou_d1_em: nowIso,
+                        risco_no_show: "baixo",
+                    };
+                    const updated = await supabaseService.request("PATCH", "agendamentos", {
+                        query: q,
+                        body: updates,
+                    });
+                    if (!updated || (Array.isArray(updated) && updated.length === 0)) {
+                        result = { success: false, message: "Agendamento não encontrado pra marcar D-1" };
+                    }
+                    else {
+                        logger.info(`✅ D-1 confirmado`, { agendamentoId, telefone, tenantId });
+                        result = {
+                            success: true,
+                            message: "Confirmação D-1 registrada com sucesso",
+                            confirmou_d1_em: nowIso,
+                            agendamento: Array.isArray(updated) ? updated[0] : updated,
+                        };
+                    }
+                }
+                catch (err) {
+                    logger.error("marcar_d1_confirmado failed", err);
+                    result = { error: `Erro ao marcar D-1: ${err.message}` };
                 }
                 break;
             }
@@ -1167,6 +1398,12 @@ async function handleMessagePost(req, res, transports) {
     }
     await transport.handlePostMessage(req, res);
 }
+async function handleStreamableHttp(req, res) {
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    const server = createMcpServer();
+    await server.connect(transport);
+    await transport.handleRequest(req, res);
+}
 async function main() {
     try {
         try {
@@ -1181,6 +1418,10 @@ async function main() {
         const transports = new Map();
         const httpServer = createServer(async (req, res) => {
             try {
+                if (req.url?.startsWith("/mcp") && req.method === "POST") {
+                    await handleStreamableHttp(req, res);
+                    return;
+                }
                 if (req.url?.startsWith("/sse")) {
                     await handleSseConnection(req, res, transports);
                     return;
@@ -1206,6 +1447,7 @@ async function main() {
         });
         httpServer.listen(PORT, "0.0.0.0", () => {
             logger.info(`${SERVER_NAME} v${SERVER_VERSION} rodando na porta ${PORT} 🚀`);
+            logger.info(`Transports: Streamable HTTP (/mcp) + SSE (/sse)`);
             logger.info(`Tools available: ${TOOLS.length}`);
             logger.info(`Resources available: ${RESOURCES.length}`);
             console.error("📁 Clientes disponíveis:", clientService.listClients());

@@ -990,140 +990,25 @@ async function handleToolCall(name: string, args: Record<string, unknown>) {
       }
 
       case "agendar_consulta": {
-  let agendamento: any;
-  try {
-    // criarAgendamento(clientId, dados, tenantId?)
-    agendamento = await schedulerService.criarAgendamento("magrass-barbacena", {
-      telefone: args.telefone as string,
-      data: args.data as string,
-      horario: args.horario as string,
-      nome: args.nome as string,
-      dataNascimento: args.data_nascimento as string,
-      leadId: args.lead_id as string,
-    }, tenantId);
-  } catch (err: any) {
-    if (err.message?.includes("duplicate") || err.message?.includes("já existe")) {
-      result = { success: true, message: "Agendamento já existe (duplicate key). Horário reservado!", duplicate: true };
-    } else {
-      result = { error: `Erro ao agendar: ${err.message}` };
-    }
-    break;
-  }
-
-  // 🎁 HOOK AUTOMÁTICO DE VOUCHER (V4.4)
-  // Após agendar com sucesso, envia voucher imediatamente — sem depender do modelo lembrar.
-  // Lê voucher_url e voucher_caption direto do config.json do tenant (montado em /app/clientes/).
-  let voucherStatus: "sent" | "failed" | "skipped" | "duplicate" = "skipped";
-  let voucherError: string | undefined;
-  const agendamentoId = agendamento?.id || agendamento?.agendamentoId;
-
-  try {
-    // 1. Lê config.json do tenant direto do filesystem (montado via volume Docker)
-    let voucherUrl: string | undefined;
-    let voucherCaption: string | undefined;
-
-    try {
-      const fs = await import("fs");
-      const configPath = "/app/clientes/magrass-barbacena/config.json";
-      const raw = fs.readFileSync(configPath, "utf-8");
-      const cfg = JSON.parse(raw);
-      voucherUrl = cfg?.prompt_vars?.voucher_url;
-      voucherCaption = cfg?.prompt_vars?.voucher_caption;
-    } catch (cfgErr: any) {
-      logger.warn("[Voucher] ⚠️ Falha ao ler config.json", {
-        error: cfgErr?.message,
-        configPath: "/app/clientes/magrass-barbacena/config.json",
-      });
-    }
-
-    if (!voucherUrl || !voucherCaption) {
-      logger.info("[Voucher] ⚠️ Tenant sem voucher_url/voucher_caption configurado, pulando envio", {
-        tenantId,
-        hasUrl: !!voucherUrl,
-        hasCaption: !!voucherCaption,
-      });
-      voucherStatus = "skipped";
-    } else {
-      // 2. Verifica idempotência: já tem voucher_enviado_em?
-      let alreadySent = false;
-      if (agendamentoId) {
         try {
-          const check = await supabaseService.request<any[]>("GET", "agendamentos", {
-            query: `id=eq.${agendamentoId}&select=voucher_enviado_em`,
-          });
-          if (check?.[0]?.voucher_enviado_em) {
-            alreadySent = true;
-            voucherStatus = "duplicate";
-            logger.info("[Voucher] ⏭️ Voucher já enviado anteriormente, pulando", {
-              agendamentoId,
-              previouslySentAt: check[0].voucher_enviado_em,
-            });
-          }
-        } catch { /* fail-open: tenta enviar */ }
-      }
-
-      // 3. Envia voucher se ainda não enviado
-      if (!alreadySent) {
-        const phone = (args.telefone as string).replace(/\D/g, "");
-        await wahaService.sendImage(phone, voucherUrl, voucherCaption);
-        voucherStatus = "sent";
-
-        logger.info("[Voucher] ✅ Enviado automaticamente após agendar_consulta", {
-          agendamentoId,
-          telefone: phone,
-          tenantId,
-        });
-
-        // 4. Marca timestamp + status no agendamento (auditável)
-        if (agendamentoId) {
-          try {
-            await supabaseService.request("PATCH", "agendamentos", {
-              query: `id=eq.${agendamentoId}`,
-              body: {
-                voucher_enviado_em: new Date().toISOString(),
-                voucher_envio_status: "sent",
-              },
-            });
-          } catch (auditErr: any) {
-            logger.warn("[Voucher] ⚠️ Falha ao marcar voucher_enviado_em (não-bloqueante)", {
-              agendamentoId,
-              error: auditErr?.message,
-            });
+          // criarAgendamento(clientId, dados, tenantId?)
+          result = await schedulerService.criarAgendamento("magrass-barbacena", {
+            telefone: args.telefone as string,
+            data: args.data as string,
+            horario: args.horario as string,
+            nome: args.nome as string,
+            dataNascimento: args.data_nascimento as string,
+            leadId: args.lead_id as string,
+          }, tenantId);
+        } catch (err: any) {
+          if (err.message?.includes("duplicate") || err.message?.includes("já existe")) {
+            result = { success: true, message: "Agendamento já existe (duplicate key). Horário reservado!", duplicate: true };
+          } else {
+            result = { error: `Erro ao agendar: ${err.message}` };
           }
         }
+        break;
       }
-    }
-  } catch (voucherErr: any) {
-    voucherStatus = "failed";
-    voucherError = voucherErr?.message || "unknown";
-    logger.error("[Voucher] ❌ Falha no envio automático (não-bloqueante)", {
-      error: voucherError,
-      agendamentoId,
-      telefone: args.telefone,
-      tenantId,
-    });
-
-    // Marca falha no agendamento (pra retry futuro)
-    if (agendamentoId) {
-      try {
-        await supabaseService.request("PATCH", "agendamentos", {
-          query: `id=eq.${agendamentoId}`,
-          body: { voucher_envio_status: "failed" },
-        });
-      } catch { /* já falhou, ignora */ }
-    }
-  }
-
-  // Retorna agendamento + status do voucher (pra modelo saber)
-  result = {
-    ...agendamento,
-    voucher: {
-      status: voucherStatus,
-      ...(voucherError ? { error: voucherError } : {}),
-    },
-  };
-  break;
-}
       
       case "marcar_compromisso_confirmado": {
         try {

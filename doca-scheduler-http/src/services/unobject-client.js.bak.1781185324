@@ -124,23 +124,6 @@ const QUERIES = {
     }
   `,
 
-  getOrdersWithTotals: `
-    query getOrdersWithTotals($filter: OrderFilter) {
-      getOrdersWithTotals(filter: $filter) {
-        list {
-          id
-          customer { id name cellPhone }
-          createdAt
-          totalPrice
-          totalPaid
-          status
-          type
-        }
-        totals { total totalBilled totalPending }
-      }
-    }
-  `,
-
   // ─── Mutations de agendamento (placeholders — preencher após captura) ───
 
   searchCustomers: `
@@ -494,16 +477,6 @@ class UnObjectClient {
   }
 
   // ─── Health & Stats ─────────────────────────────────────
-
-  /**
-   * Busca comandas (orders) por cliente (reconciliação) ou todas com valor
-   */
-  async getOrders({ customerId = null, status = [] } = {}) {
-    const token = await this.getToken();
-    const filter = { id:null, customerId, sellerId:null, auxId:null, status, typeValues:'WITH_VALUES' };
-    const data = await this._gql('getOrdersWithTotals', { filter }, token);
-    return data.getOrdersWithTotals?.list || [];
-  }
 
   async healthCheck() {
     try {

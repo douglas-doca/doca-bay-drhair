@@ -1,33 +1,31 @@
 services:
-  mcp-drhair-gest:
+  mcp-magrass:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: mcp-drhair-gest
+    container_name: mcp-magrass-lafaiete
     restart: unless-stopped
     env_file:
       - .env
     environment:
       - TZ=America/Sao_Paulo
-      - PORT=3103
+      - PORT=3102
     volumes:
-      - /home/DOCA-OCTA/clientes:/app/clientes
-      - ./keys:/app/keys:ro
+      - ./clientes:/app/clientes
     extra_hosts:
       - "host.docker.internal:host-gateway"
     expose:
-      - "3103"
+      - "3102"
     networks:
       - mcp_internal
       - supabase_internal
       - doca_db_internal
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3103/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3102/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 15s
-
 networks:
   mcp_internal:
     name: doca-octa_mcp_internal

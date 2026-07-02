@@ -84,19 +84,6 @@
           8238
         ]
       }
-    },
-    "magrass-americana": {
-      "ativo": true,
-      "nome": "Magrass Americana",
-      "unobject": {
-        "login": "malyck.americana",
-        "password": "mudar123",
-        "companyId": 5008,
-        "roomIds": [
-          7756,
-          4113
-        ]
-      }
     }
   }
 }
